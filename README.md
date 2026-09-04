@@ -46,6 +46,7 @@ py run.py
 | 股票池 | U-03 补涨池、U-04 切换池、C-03/C-04（B/S 条件评分） | 规则触发说明、逐条入选理由、首板/一进二买点标记(真实涨停与连板) |
 | 个股分析 | U-07、C-05 买卖信号 | 近300根真实日K(前复权)+量能+均线、龙头/补涨/切换三套条件、信号与理由 |
 | 信号看板 | U-05 | 全部买入/卖出/观察信号+理由，按方向/策略过滤 |
+| 打板操作台 | 打板全流程台账 | 92模式自动盯盘：龙头/补涨买点→**买入池**；卖点(止损/断板/加速一致/不及预期)→自动结算进**卖出池**（买入时间价、卖出时间价、盈亏%、买卖理由）；符合模式候选进**观察池**（记录日期与理由）；最新买卖点提示流每8s推送；手动了结/忽略/手动加观察 |
 | 回测中心 | U-06、C-05 | 自动/龙头/补涨/切换模式，基于样本池(成交额前500, 真实前复权日K)逐日回放 |
 | 管理/运维 | T-04 | 交易时段全市场轮询(约8s)、盘后日K自动回填、`/api/admin/status`、数据源自检 |
 
@@ -82,6 +83,9 @@ py run.py
 
 - `GET /api/dashboard/overview` 首页聚合（stats=全市场实时，含 volume 量能对比）
 - `GET /api/market/sector-zt?sector=板块名` 板块内今日涨停股+龙头/补涨/跟风分层
+- `GET /api/ops/overview` 打板台账（提示流/买入池/卖出池/观察池/统计）
+- `POST /api/ops/flush` 立即自动扫描一次（买点/卖点/观察池）
+- `POST /api/ops/manual-sell?code=` 手动了结持仓 | `manual-watch` 手动加观察 | `ignore` 移除
 - `GET /api/dashboard/sectors` 全板块(含 vol_ratio 量能列, 需次日档案积累)
 - `GET /api/leaders` 龙头 | `/api/pools` 股票池 | `/api/signals` 信号 | `/api/stocks/{code}` 个股(任意代码, 按需拉真实K线)
 - `POST /api/backtest/run` 回测（样本池真实日K） | `GET /api/backtest/meta` 样本说明

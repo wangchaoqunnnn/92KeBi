@@ -1,0 +1,361 @@
+"""打板操作台账（ops）：按 92 模式在龙头/补涨/切换标的出现买点→买点提示并入买入池；
+出现卖点→卖点提示并结算进卖出池(含买入/卖出时间价与理由、盈亏)；符合模式的标的进观察池。
+- 数据源: 每次分析视图重建后由调度自动执行 sweep(约每10s), 也可 POST /api/ops/flush 手动触发
+- 口径: 买入/卖出价格为提示时点的实时价(样本池行情), 盈亏按百分比口径(系统不涉及资金)
+"""
+import logging
+import time
+from datetime import datetime
+
+from . import db, market_cache
+from .core.text import PHASE_CN
+from .config import DATA_SOURCE
+
+log = logging.getLogger("kb.ops")
+
+TABLE = """
+CREATE TABLE IF NOT EXISTS ops_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT NOT NULL, name TEXT, sector TEXT,
+  pool TEXT NOT NULL,               -- buy | sell | watch
+  status TEXT NOT NULL DEFAULT 'open',
+  strategy TEXT, signal TEXT,
+  reason TEXT,
+  entry_date TEXT, entry_time TEXT, entry_price REAL,
+  exit_date TEXT, exit_time TEXT, exit_price REAL, exit_reason TEXT,
+  pnl_pct REAL, hold_days INTEGER,
+  created_at TEXT, updated_at TEXT, last_date TEXT,
+  note TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_ops_code ON ops_items(code);
+CREATE INDEX IF NOT EXISTS idx_ops_pool ON ops_items(pool, status);
+CREATE TABLE IF NOT EXISTS ops_prompts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT, name TEXT, type TEXT,          -- buy | sell | watch
+  strategy TEXT, signal TEXT, ts TEXT, price REAL, reason TEXT
+);
+"""
+
+_ok = False
+
+
+def setup():
+    global _ok
+    if not _ok:
+        db.init_db()
+        con = db.get_conn()
+        con.executescript(TABLE)
+        con.commit()
+        _ok = True
+
+
+def _now():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _today():
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+def _price_for(code, ctx):
+    """实时价: 快照报价优先(实盘), 否则当日合成K线收盘"""
+    try:
+        if DATA_SOURCE == "real":
+            from .real import market as real_mkt
+            q = real_mkt.snapshot().get("quotes", {}).get(code)
+            if q and q.get("price"):
+                return q["price"]
+    except Exception:
+        pass
+    f = (ctx or {}).get("feats", {}).get(code) or {}
+    today = f.get("today") or {}
+    return today.get("close")
+
+
+def _signal_view():
+    """当前视图与上下文(轻量复制, 不持有缓存锁)"""
+    ctx = market_cache.get_ctx() or {}
+    view = market_cache._cache.get("view") or {}
+    return view, ctx
+
+
+# ---------------------------------------------------------------- 事件
+def _prompt(code, name, ptype, strategy, signal, price, reason):
+    try:
+        with db.tx() as con:
+            con.execute("INSERT INTO ops_prompts(code,name,type,strategy,signal,ts,price,reason) "
+                        "VALUES(?,?,?,?,?,?,?,?)",
+                        (code, name, ptype, strategy, signal, _now(),
+                         round(float(price or 0), 2), str(reason or "")[:400]))
+        log.info("ops prompt %s %s %s @%s: %s", ptype, code, signal, price, reason)
+    except Exception as e:  # noqa
+        log.warning("prompt log: %s", e)
+
+
+def _open_buy_codes():
+    return {r["code"] for r in db.query(
+        "SELECT code FROM ops_items WHERE pool='buy' AND status='open'")}
+
+
+def _watch_codes():
+    return {r["code"] for r in db.query(
+        "SELECT code FROM ops_items WHERE pool='watch' AND status='open'")}
+
+
+# ---------------------------------------------------------------- 扫描
+def sweep(view=None, ctx=None):
+    """自动盯盘: 买点→买入池; 持仓卖点→卖出池; 模式候选→观察池。幂等、低写入。"""
+    setup()
+    if not view or not ctx:
+        view, ctx = _signal_view()
+    if not view or not ctx or not ctx.get("feats"):
+        return {"state": "idle", "reason": "视图未就绪"}
+    date = view.get("date") or _today()
+    opened = 0
+    closed = 0
+    watched = 0
+
+    # ---- 1) 买点提示 → 买入池(一次一笔, 当日去重由 open 状态保证) ----
+    open_buys = _open_buy_codes()
+    sigs = (view.get("signals") or {}).get("items") or []
+    buy_sigs = [s for s in sigs if s.get("dir") == "buy"]
+    for s in buy_sigs[:12]:
+        code = s.get("code")
+        if not code or code in open_buys:
+            continue
+        price = _price_for(code, ctx) or s.get("price")
+        if not price or price <= 0:
+            continue
+        name = s.get("name", code)
+        reason = f"{s.get('signal')}：{s.get('reason')}"
+        now = _now()
+        try:
+            with db.tx() as con:
+                cur = con.execute(
+                    "SELECT id FROM ops_items WHERE code=? AND pool='buy' AND status='open'",
+                    (code,)).fetchone()
+                if cur:
+                    continue
+                con.execute(
+                    "INSERT INTO ops_items(code,name,sector,pool,status,strategy,signal,reason,"
+                    "entry_date,entry_time,entry_price,created_at,updated_at,last_date) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (code, name, s.get("sector"), "buy", "open", s.get("strategy"),
+                     s.get("signal"), reason, date, _now(), price, now, now, date))
+            opened += 1
+            _prompt(code, name, "buy", s.get("strategy"), s.get("signal"), price, reason)
+        except Exception as e:  # noqa
+            log.warning("buy add %s: %s", code, e)
+
+    # ---- 2) 持仓卖点 → 卖出池(结算) ----
+    rows = db.query("SELECT * FROM ops_items WHERE pool='buy' AND status='open'")
+    for r in rows:
+        code = r["code"]
+        f = ctx.get("feats", {}).get(code)
+        if not f:
+            continue
+        today = f.get("today") or {}
+        price = _price_for(code, ctx) or today.get("close")
+        if not price or price <= 0:
+            continue
+        entry = r["entry_price"] or price
+        exit_reason = None
+        # 卖出理由优先: 止损线 / 规则引擎卖出信号
+        if price <= entry * (1 - 0.05):
+            exit_reason = f"止损(-5%)：现价 {price:.2f} ≤ 买入 {entry:.2f}×0.95"
+        else:
+            from .core import signals as sig_mod
+            sigs2 = sig_mod.for_stock(code, f, ctx)
+            sell = next((s for s in sigs2 if s.get("dir") == "sell"), None)
+            if sell:
+                exit_reason = f"{sell.get('signal')}：{sell.get('reason')}"
+        if not exit_reason:
+            continue
+        # 持有天数(自然日)
+        try:
+            ed = datetime.strptime(r["entry_date"] + " " + (r["entry_time"] or "00:00:00"),
+                                   "%Y-%m-%d %H:%M:%S")
+            hold = max(1, (datetime.now() - ed).days)
+        except Exception:
+            hold = 1
+        pnl = round((price / entry - 1) * 100, 2)
+        now = _now()
+        try:
+            with db.tx() as con:
+                con.execute(
+                    "UPDATE ops_items SET pool='sell', status='closed', "
+                    "exit_date=?, exit_time=?, exit_price=?, exit_reason=?, pnl_pct=?, "
+                    "hold_days=?, updated_at=? WHERE id=?",
+                    (date, now, round(price, 2), exit_reason, pnl, hold, now, r["id"]))
+            closed += 1
+            _prompt(code, r.get("name", code), "sell", r.get("strategy"),
+                    "卖出提示", price, exit_reason)
+        except Exception as e:  # noqa
+            log.warning("sell close %s: %s", code, e)
+
+    # ---- 3) 观察池: 符合模式待观察(池内候选/龙头候选, 记录日期与理由) ----
+    watch_need = {}
+    pools = view.get("pools") or {}
+    for key in ("buyang", "qiehuan"):
+        pv = pools.get(key)
+        if not pv:
+            continue
+        for it in (pv.get("items") or [])[:12]:
+            reason = (it.get("reasons") or ["—"])[:2]
+            trigger = it.get("entry_state")
+            tag = {"first_board": "今日首板", "one_to_two": "今日一进二"}.get(trigger, "等待买点")
+            txt = f"[{tag}] {it.get('score')}分：{'；'.join(str(x) for x in reason)}"
+            watch_need[it["code"]] = (it.get("name", it["code"]), it.get("sector"), txt)
+    for l in (view.get("leaders") or {}).get("pool") or []:
+        code = l["code"]
+        if code in watch_need:
+            continue
+        conds_ok = sum(1 for c in (l.get("conds") or []) if c.get("ok"))
+        warn = "⚠高位断板观察(断板即撤)" if l.get("broken_today") else "龙头候选(辨识度)"
+        txt = f"[{warn}] 龙头评分 {l.get('score')}（{conds_ok}/6 条条件成立）"
+        watch_need[code] = (l.get("name", code), l.get("sector"), txt)
+
+    existing = db.query("SELECT code, reason, last_date FROM ops_items "
+                        "WHERE pool='watch' AND status='open'")
+    exist_map = {r["code"]: r for r in existing}
+    seen = set()
+    for code, (name, sector, txt) in watch_need.items():
+        if code in seen:
+            continue
+        seen.add(code)
+        cur = exist_map.get(code)
+        now = _now()
+        if cur and cur["reason"] == txt and cur["last_date"] == date:
+            continue  # 无变化不写库
+        try:
+            with db.tx() as con:
+                if cur:
+                    con.execute("UPDATE ops_items SET name=?, sector=?, reason=?, last_date=?, "
+                                "updated_at=? WHERE id=?", (name, sector, txt, date, now, cur["id"]))
+                else:
+                    con.execute(
+                        "INSERT INTO ops_items(code,name,sector,pool,status,reason,last_date,"
+                        "created_at,updated_at,note) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                        (code, name, sector, "watch", "open", txt, date, now, now,
+                         f"加入观察 {date}"))
+            watched += 1
+        except Exception as e:  # noqa
+            log.warning("watch add %s: %s", code, e)
+    # 观察过期: 不在候选且 >5 个自然日未更新 → 归档
+    stale = [r["id"] for r in db.query(
+        "SELECT id, last_date FROM ops_items WHERE pool='watch' AND status='open'")]
+    for r in db.query("SELECT id, last_date FROM ops_items WHERE pool='watch' AND status='open'"):
+        try:
+            old = datetime.strptime(r["last_date"], "%Y-%m-%d").date()
+            if (datetime.now().date() - old).days > 5:
+                db.execute("UPDATE ops_items SET status='archived', updated_at=? WHERE id=?",
+                           (_now(), r["id"]))
+        except Exception:
+            pass
+    return {"state": "done", "date": date, "opened": opened, "closed": closed,
+            "watched": watched, "watch_total": len(watch_need)}
+
+
+# ---------------------------------------------------------------- 查询/操作
+def _row_view(r):
+    return {k: r[k] for k in ("id", "code", "name", "sector", "pool", "status", "strategy",
+                              "signal", "reason", "entry_date", "entry_time", "entry_price",
+                              "exit_date", "exit_time", "exit_price", "exit_reason", "pnl_pct",
+                              "hold_days", "created_at", "updated_at", "last_date")}
+
+
+def overview():
+    setup()
+    date = _today()
+    _, ctx = _signal_view()
+    # 统计
+    buy_rows = [r for r in db.query(
+        "SELECT * FROM ops_items WHERE pool='buy' AND status='open' ORDER BY entry_time DESC LIMIT 60")]
+    sell_rows = [r for r in db.query(
+        "SELECT * FROM ops_items WHERE pool='sell' ORDER BY exit_time DESC LIMIT 100")]
+    watch_rows = [r for r in db.query(
+        "SELECT * FROM ops_items WHERE pool='watch' AND status='open' "
+        "ORDER BY updated_at DESC LIMIT 80")]
+    prompts = [r for r in db.query(
+        "SELECT * FROM ops_prompts ORDER BY id DESC LIMIT 60")]
+    # 现价与实时浮盈
+    for r in buy_rows:
+        price = _price_for(r["code"], ctx)
+        r["last_price"] = round(price, 2) if price else None
+        r["live_pct"] = round((price / r["entry_price"] - 1) * 100, 2) \
+            if price and r["entry_price"] else None
+    wins = [r for r in sell_rows if (r["pnl_pct"] or 0) > 0]
+    loss = [r for r in sell_rows if (r["pnl_pct"] or 0) <= 0]
+    return {
+        "date": date,
+        "mode": "real" if DATA_SOURCE == "real" else "mock",
+        "stats": {
+            "buy_open": len(buy_rows), "watch": len(watch_rows), "sold": len(sell_rows),
+            "today_prompt_buy": sum(1 for p in prompts if p["type"] == "buy"),
+            "win_rate_pct": round(len(wins) / len(sell_rows) * 100, 1) if sell_rows else None,
+            "avg_win_pct": round(sum(r["pnl_pct"] for r in wins) / len(wins), 2) if wins else None,
+            "avg_loss_pct": round(sum(r["pnl_pct"] for r in loss) / len(loss), 2) if loss else None,
+            "avg_hold_days": round(sum((r["hold_days"] or 0) for r in sell_rows) / len(sell_rows), 1) if sell_rows else None,
+        },
+        "buy": [_row_view(r) for r in buy_rows],
+        "sell": [_row_view(r) for r in sell_rows],
+        "watch": [_row_view(r) for r in watch_rows],
+        "prompts": [{"code": p["code"], "name": p["name"], "type": p["type"],
+                     "strategy": p["strategy"], "signal": p["signal"], "ts": p["ts"],
+                     "price": p["price"], "reason": p["reason"]} for p in prompts],
+        "disclaimer": ("自动盯盘提示按 92 模式规则生成（买点=信号触发, 卖点=断板/止损/不及预期等），"
+                       "价格为提示时点行情价；仅供参考，不构成投资建议，最终按你实际成交为准。"),
+    }
+
+
+def ignore_item(pool, code):
+    setup()
+    where = "pool=? AND code=? AND status='open'" if pool == "buy" else "pool=? AND code=?"
+    if pool == "buy":
+        n = db.execute("UPDATE ops_items SET status='ignored', updated_at=? "
+                       "WHERE pool='buy' AND code=? AND status='open'", (_now(), code)).rowcount
+    elif pool == "watch":
+        n = db.execute("UPDATE ops_items SET status='archived', updated_at=? "
+                       "WHERE pool='watch' AND code=? AND status='open'", (_now(), code)).rowcount
+    else:
+        n = 0
+    return {"ok": True, "removed": n}
+
+
+def manual_sell(code):
+    """手动了结一笔买入池持仓(按当前价)"""
+    setup()
+    view, ctx = _signal_view()
+    rows = db.query("SELECT * FROM ops_items WHERE pool='buy' AND status='open' AND code=?",
+                    (code,))
+    if not rows:
+        return {"ok": False, "error": "买入池中无该持仓"}
+    r = rows[0]
+    price = _price_for(code, ctx) or r["entry_price"]
+    pnl = round((price / r["entry_price"] - 1) * 100, 2) if r["entry_price"] else 0
+    now = _now()
+    db.execute(
+        "UPDATE ops_items SET pool='sell', status='closed', exit_date=?, exit_time=?, "
+        "exit_price=?, exit_reason='手动了结', pnl_pct=?, updated_at=? WHERE id=?",
+        (r["entry_date"], now, round(price, 2), pnl, now, r["id"]))
+    _prompt(code, r.get("name", code), "sell", r.get("strategy"), "手动卖出", price, "手动了结")
+    return {"ok": True, "code": code, "price": round(price, 2), "pnl_pct": pnl}
+
+
+def manual_watch(code):
+    """手动加入观察池"""
+    setup()
+    view, ctx = _signal_view()
+    meta = (ctx or {}).get("stocks", {}).get(code) or {}
+    price = _price_for(code, ctx)
+    now = _now()
+    date = _today()
+    if db.query_one("SELECT id FROM ops_items WHERE pool='watch' AND code=? AND status='open'", (code,)):
+        return {"ok": False, "error": "已在观察池"}
+    db.execute(
+        "INSERT INTO ops_items(code,name,sector,pool,status,reason,last_date,created_at,updated_at) "
+        "VALUES(?,?,?,?,?,?,?,?,?)",
+        (code, meta.get("name") or code, meta.get("sector") or "",
+         "watch", "open", "手动加入观察", date, now, now))
+    _prompt(code, meta.get("name") or code, "watch", None, "手动观察", price, "手动加入观察池")
+    return {"ok": True}

@@ -5,6 +5,7 @@ import DashboardPage from './pages/DashboardPage'
 import LeadersPage from './pages/LeadersPage'
 import PoolsPage from './pages/PoolsPage'
 import SignalsPage from './pages/SignalsPage'
+import OpsPage from './pages/OpsPage'
 import StockPage from './pages/StockPage'
 import BacktestPage from './pages/BacktestPage'
 import { Loading } from './components/ui'
@@ -14,6 +15,7 @@ const ROUTES = [
   { path: '/leaders', label: '龙头榜', el: LeadersPage },
   { path: '/pools', label: '股票池', el: PoolsPage },
   { path: '/signals', label: '信号看板', el: SignalsPage },
+  { path: '/ops', label: '打板台', el: OpsPage },
   { path: '/stock', label: '个股分析', el: StockPage },
   { path: '/backtest', label: '回测中心', el: BacktestPage },
 ]

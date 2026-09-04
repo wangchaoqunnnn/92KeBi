@@ -25,6 +25,12 @@ export const api = {
   live: () => req('/api/market/live'),
   sectorZt: (sector) => req(`/api/market/sector-zt?sector=${encodeURIComponent(sector)}`),
 
+  opsOverview: () => req('/api/ops/overview'),
+  opsFlush: () => req('/api/ops/flush', { method: 'POST', body: '{}' }),
+  opsIgnore: (pool, code) => req(`/api/ops/ignore?pool=${pool}&code=${code}`, { method: 'POST', body: '{}' }),
+  opsManualSell: (code) => req(`/api/ops/manual-sell?code=${code}`, { method: 'POST', body: '{}' }),
+  opsManualWatch: (code) => req(`/api/ops/manual-watch?code=${code}`, { method: 'POST', body: '{}' }),
+
   overview: () => req('/api/dashboard/overview'),
   sectors: () => req('/api/dashboard/sectors'),
   history: (days = 40) => req(`/api/dashboard/history?days=${days}`),

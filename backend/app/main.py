@@ -98,8 +98,10 @@ app.add_middleware(
 
 from .api.routes import router as r1   # noqa: E402
 from .api.extra import router as r2    # noqa: E402
+from .api.ops_api import router as r3  # noqa: E402
 app.include_router(r1)
 app.include_router(r2)
+app.include_router(r3)
 
 
 @app.get("/api/health")

@@ -70,12 +70,26 @@ class Scheduler:
                 await asyncio.sleep(2)
 
     async def _analysis_loop(self):
-        """按周期重建分析视图(带单飞锁)，页面请求基本命中缓存、无重算风暴。"""
+        """按周期重建分析视图(带单飞锁)，并驱动 ops 打板台账扫描。均在 worker 线程执行不阻塞事件循环。"""
         cadence = 6 if DATA_SOURCE == "mock" else 10
+        _ops_running = False
         while _state["running"]:
             try:
-                market_cache.get_view(max_age=8.0)
+                await asyncio.to_thread(market_cache.get_view, 8.0)
                 _state["last_analysis"] = time.strftime("%H:%M:%S")
+                # 打板台账: 买点→买入池, 卖点→卖出池, 候选→观察池
+                if not _ops_running:
+                    _ops_running = True
+                    try:
+                        from .. import ops
+                        view = market_cache._cache.get("view")
+                        ctx = market_cache.get_ctx()
+                        if view and ctx:
+                            await asyncio.to_thread(ops.sweep, view, ctx)
+                    except Exception as e:  # noqa
+                        log.warning("ops sweep error: %s", e)
+                    finally:
+                        _ops_running = False
             except Exception as e:  # noqa
                 log.warning("analysis error: %s", e)
             await asyncio.sleep(cadence)
