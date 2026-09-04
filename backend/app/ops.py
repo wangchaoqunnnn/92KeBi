@@ -235,7 +235,7 @@ def sweep(view=None, ctx=None):
             reason = (it.get("reasons") or ["—"])[:2]
             trigger = it.get("entry_state")
             tag = {"first_board": "今日首板", "one_to_two": "今日一进二"}.get(trigger, "等待买点")
-            txt = f"[{tag}] {it.get('score')}分：{'；'.join(str(x) for x in reason)}"
+            txt = f"[{tag}] {'；'.join(str(x) for x in reason)}"
             watch_need[it["code"]] = (it.get("name", it["code"]), it.get("sector"), txt,
                                       it.get("score"))
     for l in (view.get("leaders") or {}).get("pool") or []:
@@ -244,7 +244,7 @@ def sweep(view=None, ctx=None):
             continue
         conds_ok = sum(1 for c in (l.get("conds") or []) if c.get("ok"))
         warn = "⚠高位断板观察(断板即撤)" if l.get("broken_today") else "龙头候选(辨识度)"
-        txt = f"[{warn}] 龙头评分 {l.get('score')}（{conds_ok}/6 条条件成立）"
+        txt = f"[{warn}] {conds_ok}/6 条条件成立"
         watch_need[code] = (l.get("name", code), l.get("sector"), txt, l.get("score"))
 
     existing = db.query("SELECT code, reason, last_date FROM ops_items "
@@ -313,6 +313,20 @@ def _score_fallback(row):
     return None
 
 
+def _clean_reason(txt):
+    """移除理由中已单列展示的评分片段(兼容旧数据)"""
+    import re
+    s = str(txt or "")
+    s = re.sub(r"龙头评分\s*[\d.]+\s*", "", s)
+    s = re.sub(r"(\[[^\]]*\])\s*[\d.]+\s*分：", r"\1 ", s)
+    s = re.sub(r"[\d.]+\s*分：", "", s)
+    s = re.sub(r"（(\d+/6[^）]*)）", r"(\1)", s)   # 兼容旧全角括号条件计数
+    s = re.sub(r"\]\s*\(", "] ", s)
+    s = re.sub(r"\)\s*$", "", s)
+    s = re.sub(r"\s+", " ", s).strip(" ；;")
+    return s
+
+
 def overview():
     setup()
     date = _today()
@@ -327,7 +341,21 @@ def overview():
         "ORDER BY updated_at DESC LIMIT 80")]
     for r in watch_rows:
         if r.get("score") is None:
-            r["score"] = _score_fallback(r)
+            scr = _score_fallback(r)
+            if scr is not None:
+                try:
+                    db.execute("UPDATE ops_items SET score=? WHERE id=?", (scr, r["id"]))
+                except Exception:
+                    pass
+                r["score"] = scr
+        # 评分已单列, 同步清理理由中残留的评分文案(立即生效并回写DB)
+        cleaned = _clean_reason(r.get("reason"))
+        if cleaned != r.get("reason"):
+            try:
+                db.execute("UPDATE ops_items SET reason=? WHERE id=?", (cleaned, r["id"]))
+            except Exception:
+                pass
+            r["reason"] = cleaned
     prompts = [r for r in db.query(
         "SELECT * FROM ops_prompts ORDER BY id DESC LIMIT 60")]
     # 现价与实时浮盈
