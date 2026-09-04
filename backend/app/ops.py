@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS ops_items (
   exit_date TEXT, exit_time TEXT, exit_price REAL, exit_reason TEXT,
   pnl_pct REAL, hold_days INTEGER,
   created_at TEXT, updated_at TEXT, last_date TEXT,
-  note TEXT
+  note TEXT,
+  score REAL
 );
 CREATE INDEX IF NOT EXISTS idx_ops_code ON ops_items(code);
 CREATE INDEX IF NOT EXISTS idx_ops_pool ON ops_items(pool, status);
@@ -35,6 +36,16 @@ CREATE TABLE IF NOT EXISTS ops_prompts (
   strategy TEXT, signal TEXT, ts TEXT, price REAL, reason TEXT
 );
 """
+
+
+def _ensure_score_col():
+    try:
+        cols = [r["name"] for r in db.query("PRAGMA table_info(ops_items)")]
+        if "score" not in cols:
+            db.execute("ALTER TABLE ops_items ADD COLUMN score REAL")
+    except Exception as e:
+        log.warning("ensure score col: %s", e)
+
 
 _ok = False
 
@@ -46,6 +57,7 @@ def setup():
         con = db.get_conn()
         con.executescript(TABLE)
         con.commit()
+        _ensure_score_col()
         _ok = True
 
 
@@ -224,7 +236,8 @@ def sweep(view=None, ctx=None):
             trigger = it.get("entry_state")
             tag = {"first_board": "今日首板", "one_to_two": "今日一进二"}.get(trigger, "等待买点")
             txt = f"[{tag}] {it.get('score')}分：{'；'.join(str(x) for x in reason)}"
-            watch_need[it["code"]] = (it.get("name", it["code"]), it.get("sector"), txt)
+            watch_need[it["code"]] = (it.get("name", it["code"]), it.get("sector"), txt,
+                                      it.get("score"))
     for l in (view.get("leaders") or {}).get("pool") or []:
         code = l["code"]
         if code in watch_need:
@@ -232,13 +245,13 @@ def sweep(view=None, ctx=None):
         conds_ok = sum(1 for c in (l.get("conds") or []) if c.get("ok"))
         warn = "⚠高位断板观察(断板即撤)" if l.get("broken_today") else "龙头候选(辨识度)"
         txt = f"[{warn}] 龙头评分 {l.get('score')}（{conds_ok}/6 条条件成立）"
-        watch_need[code] = (l.get("name", code), l.get("sector"), txt)
+        watch_need[code] = (l.get("name", code), l.get("sector"), txt, l.get("score"))
 
     existing = db.query("SELECT code, reason, last_date FROM ops_items "
                         "WHERE pool='watch' AND status='open'")
     exist_map = {r["code"]: r for r in existing}
     seen = set()
-    for code, (name, sector, txt) in watch_need.items():
+    for code, (name, sector, txt, score) in watch_need.items():
         if code in seen:
             continue
         seen.add(code)
@@ -250,13 +263,14 @@ def sweep(view=None, ctx=None):
             with db.tx() as con:
                 if cur:
                     con.execute("UPDATE ops_items SET name=?, sector=?, reason=?, last_date=?, "
-                                "updated_at=? WHERE id=?", (name, sector, txt, date, now, cur["id"]))
+                                "score=?, updated_at=? WHERE id=?",
+                                (name, sector, txt, date, score, now, cur["id"]))
                 else:
                     con.execute(
                         "INSERT INTO ops_items(code,name,sector,pool,status,reason,last_date,"
-                        "created_at,updated_at,note) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                        "created_at,updated_at,note,score) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                         (code, name, sector, "watch", "open", txt, date, now, now,
-                         f"加入观察 {date}"))
+                         f"加入观察 {date}", score))
             watched += 1
         except Exception as e:  # noqa
             log.warning("watch add %s: %s", code, e)
@@ -281,7 +295,22 @@ def _row_view(r):
     return {k: r[k] for k in ("id", "code", "name", "sector", "pool", "status", "strategy",
                               "signal", "reason", "entry_date", "entry_time", "entry_price",
                               "exit_date", "exit_time", "exit_price", "exit_reason", "pnl_pct",
-                              "hold_days", "created_at", "updated_at", "last_date")}
+                              "hold_days", "created_at", "updated_at", "last_date", "score")}
+
+
+def _score_fallback(row):
+    """旧数据无 score 字段时, 从理由文本解析评分兜底"""
+    if row.get("score") is not None:
+        return row["score"]
+    import re
+    txt = str(row.get("reason") or "")
+    m = re.search(r"龙头评分\s*([\d.]+)", txt) or re.search(r"\[?[\u4e00-\u9fa5]*\]?\s*([\d.]+)\s*分", txt)
+    if m:
+        try:
+            return float(m.group(1))
+        except Exception:
+            return None
+    return None
 
 
 def overview():
@@ -296,6 +325,9 @@ def overview():
     watch_rows = [r for r in db.query(
         "SELECT * FROM ops_items WHERE pool='watch' AND status='open' "
         "ORDER BY updated_at DESC LIMIT 80")]
+    for r in watch_rows:
+        if r.get("score") is None:
+            r["score"] = _score_fallback(r)
     prompts = [r for r in db.query(
         "SELECT * FROM ops_prompts ORDER BY id DESC LIMIT 60")]
     # 现价与实时浮盈

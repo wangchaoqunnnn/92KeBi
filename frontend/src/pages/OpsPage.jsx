@@ -26,7 +26,7 @@ export default function OpsPage({ route, params, nav, goStock }) {
 
   const bSort = useTableSort('entry_time')
   const sSort = useTableSort('exit_time')
-  const wSort = useTableSort('updated_at')
+  const wSort = useTableSort('score')
   const buys = sortRows((data?.buy) || [], bSort.key, bSort.dir)
   const sells = sortRows((data?.sell) || [], sSort.key, sSort.dir)
   const watch = sortRows((data?.watch) || [], wSort.key, wSort.dir)
@@ -223,6 +223,7 @@ export default function OpsPage({ route, params, nav, goStock }) {
                 <table className="tbl">
                   <thead><tr>
                     <SortTh label="名称" sortKey="name" sort={wSort} />
+                    <SortTh label="评分" sortKey="score" sort={wSort} />
                     <SortTh label="最近记录" sortKey="updated_at" sort={wSort} />
                     <th>记录日期</th>
                     <th>观察理由</th>
@@ -232,9 +233,12 @@ export default function OpsPage({ route, params, nav, goStock }) {
                     {watch.map((r) => (
                       <tr key={r.id}>
                         <td><b><span className="link" onClick={() => goStock(r.code)}>{r.name}</span></b><div className="muted2 small">{r.code} · {r.sector}</div></td>
+                        <td className="num" style={{ fontWeight: 700, color: (r.score ?? -1) >= 70 ? 'var(--gold)' : (r.score ?? -1) >= 55 ? '#7aa9ff' : undefined }}>
+                          {r.score != null ? fmt(r.score, 1) : '—'}
+                        </td>
                         <td className="num">{dateShort(r.updated_at)} {timeShort(r.updated_at)}</td>
                         <td className="num">{r.last_date || r.entry_date || '—'}</td>
-                        <td className="wrap-cell" style={{ maxWidth: 420 }} title={r.reason}>{r.reason}</td>
+                        <td className="wrap-cell" style={{ maxWidth: 380 }} title={r.reason}>{r.reason}</td>
                         <td>
                           <div className="ops-act">
                             <button className="btn btn-sm" onClick={() => goStock(r.code)}>查看</button>
