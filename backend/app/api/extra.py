@@ -143,6 +143,16 @@ def stock_detail(code: str):
     }
 
 
+@router.get("/stocks/{code}/block-trades")
+def stock_block_trades(code: str, limit: int = Query(40, ge=5, le=120)):
+    """历史大宗交易(按日聚合统计): 东财数据中心 RPT_BLOCKTRADE_STA"""
+    from ..real import blocktrade
+    res = blocktrade.fetch_block_trades(code, limit)
+    if DATA_SOURCE == "mock":
+        res["note"] = "大宗交易数据来自东财数据中心；模拟(mock)模式下为空。"
+    return res
+
+
 @router.get("/stocks/{code}/compare")
 def stock_compare(code: str):
     from ..config import DATA_SOURCE

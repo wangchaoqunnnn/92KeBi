@@ -193,6 +193,19 @@ export default function StockPage({ route, params, nav, goStock }) {
     load()
   }, [load])
 
+  // 历史大宗交易(独立加载)
+  const [bt, setBt] = useState(null)
+  const [btErr, setBtErr] = useState(null)
+  useEffect(() => {
+    if (!code) return
+    let on = true
+    setBt(null); setBtErr(null)
+    api.stockBlockTrades(code)
+      .then((d) => { if (on) setBt(d) })
+      .catch((e) => { if (on) setBtErr(e) })
+    return () => { on = false }
+  }, [code])
+
   // —— 所有 Hook 必须位于条件返回之前 ——
   const kOption = useMemo(() => {
     const kl = data && data.kline && data.kline.length ? data.kline : null
@@ -408,6 +421,76 @@ export default function StockPage({ route, params, nav, goStock }) {
               </div>
             </Kpi>
           </div>
+        )}
+      </Card>
+
+      {/* 1.6) 历史大宗交易统计 */}
+      <Card
+        title="历史大宗交易统计"
+        extra={<Tag cls="tag-gray">按日聚合 · 东财数据中心 · 亿元口径</Tag>}
+      >
+        {btErr ? (
+          <div className="error-box" style={{ padding: 14 }}>{String(btErr?.message || btErr)}</div>
+        ) : !bt ? (
+          <div className="loading" style={{ padding: 14 }}><span className="spin" />加载大宗交易…</div>
+        ) : (!bt.rows || bt.rows.length === 0) ? (
+          <Empty text={bt.note || '近期无大宗交易记录'} />
+        ) : (
+          <>
+            <div className="kpis">
+              <Kpi label={`统计区间 ${bt.stats?.date_from || '—'} ~ ${bt.stats?.date_to || '—'}`}>
+                <span className="num">{bt.stats?.n ?? '—'} 个交易日</span>
+                <div className="kpi-sub">近 {bt.rows.length} 条记录(按日)</div>
+              </Kpi>
+              <Kpi label="大宗成交总额">
+                <span className="num">{bt.stats?.total_amt_yi != null ? `${fmt(bt.stats.total_amt_yi, 2)}亿` : '—'}</span>
+                <div className="kpi-sub">最大单日 {bt.stats?.max_amount_yi != null ? `${fmt(bt.stats.max_amount_yi, 2)}亿` : '—'}</div>
+              </Kpi>
+              <Kpi label="平均折/溢价">
+                <span className={bt.stats?.avg_premium_pct != null ? (bt.stats.avg_premium_pct <= 0 ? 'down' : 'up') : 'flat'}>
+                  {bt.stats?.avg_premium_pct != null ? `${fmt(bt.stats.avg_premium_pct, 2)}%` : '—'}
+                </span>
+                <div className="kpi-sub">负值为折价成交</div>
+              </Kpi>
+              <Kpi label="折价成交占比">
+                <span className="num">{bt.stats?.discount_ratio != null ? `${fmt(bt.stats.discount_ratio, 1)}%` : '—'}</span>
+                <div className="kpi-sub">折价 {bt.stats?.discount_n ?? '—'} 个交易日</div>
+              </Kpi>
+            </div>
+            <div className="table-wrap" style={{ marginTop: 8 }}>
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>日期</th><th>笔数</th><th>成交量(万股)</th><th>成交均价</th>
+                    <th>收盘</th><th>折/溢价率</th><th>成交额(亿元)</th><th>成交后5日%</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bt.rows.map((r, i) => (
+                    <tr key={`${r.date}-${i}`}>
+                      <td className="num">{r.date}</td>
+                      <td className="num">{r.deal_num ?? '—'}</td>
+                      <td className="num">{r.volume_wan != null ? fmt(r.volume_wan, 1) : '—'}</td>
+                      <td className="num">{r.avg_price != null ? fmt(r.avg_price, 2) : '—'}</td>
+                      <td className="num">{r.close != null ? fmt(r.close, 2) : '—'}</td>
+                      <td>
+                        {r.premium_pct != null ? (
+                          <span className={r.premium_pct <= 0 ? 'down' : 'up'}>
+                            {r.premium_pct > 0 ? '+' : ''}{fmt(r.premium_pct, 2)}%
+                          </span>
+                        ) : '—'}
+                      </td>
+                      <td className="num">{r.amount_wan != null ? fmt(r.amount_wan / 1e4, 3) : '—'}</td>
+                      <td>{r.chg_after5 != null ? <PctText value={r.chg_after5} /> : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="muted2 small" style={{ marginTop: 6 }}>
+              大宗交易在收盘后披露；负折/溢价表示相对当日收盘价的成交折让；数据按日聚合（当日多笔合并），来自东财数据中心。
+            </div>
+          </>
         )}
       </Card>
 
