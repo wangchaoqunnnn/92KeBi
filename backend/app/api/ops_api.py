@@ -36,6 +36,12 @@ def ops_manual_watch(code: str = Query(...)):
     return ops.manual_watch(code)
 
 
+@router.post("/delete")
+def ops_delete(item_id: int = Query(...)):
+    """管理删除(仅卖出池记录)"""
+    return ops.delete_sell(item_id)
+
+
 @router.post("/push-test")
 def ops_push_test():
     """微信推送连通性测试(需配置 WECHAT_WEBHOOK 环境变量)"""

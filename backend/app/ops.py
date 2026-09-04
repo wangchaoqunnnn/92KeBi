@@ -511,3 +511,16 @@ def manual_watch(code):
          "watch", "open", "手动加入观察", date, now, now))
     _prompt(code, meta.get("name") or code, "watch", None, "手动观察", price, "手动加入观察池")
     return {"ok": True}
+
+
+def delete_sell(item_id):
+    """管理删除卖出池记录"""
+    setup()
+    row = db.query_one("SELECT id, pool, name FROM ops_items WHERE id=?", (item_id,))
+    if not row:
+        return {"ok": False, "error": "记录不存在"}
+    if row["pool"] != "sell":
+        return {"ok": False, "error": "仅卖出池记录可删除(其它池请用移除/忽略)"}
+    db.execute("DELETE FROM ops_items WHERE id=?", (item_id,))
+    log.info("ops delete sell id=%s name=%s", item_id, row["name"])
+    return {"ok": True, "deleted": 1, "name": row["name"]}

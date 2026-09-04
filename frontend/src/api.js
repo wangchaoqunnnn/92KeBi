@@ -30,6 +30,7 @@ export const api = {
   opsIgnore: (pool, code) => req(`/api/ops/ignore?pool=${pool}&code=${code}`, { method: 'POST', body: '{}' }),
   opsManualSell: (code) => req(`/api/ops/manual-sell?code=${code}`, { method: 'POST', body: '{}' }),
   opsManualWatch: (code) => req(`/api/ops/manual-watch?code=${code}`, { method: 'POST', body: '{}' }),
+  opsDelete: (itemId) => req(`/api/ops/delete?item_id=${itemId}`, { method: 'POST', body: '{}' }),
 
   overview: () => req('/api/dashboard/overview'),
   sectors: () => req('/api/dashboard/sectors'),

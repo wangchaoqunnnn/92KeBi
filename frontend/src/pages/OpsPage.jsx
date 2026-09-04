@@ -48,6 +48,10 @@ export default function OpsPage({ route, params, nav, goStock }) {
   }
   const manualSell = (c) =>
     act(() => api.opsManualSell(c).then((r) => { if (!r.ok) throw new Error(r.error || '无持仓') }), `已按现价了结 ${c}`)
+  const delSell = (row) => {
+    if (!window.confirm(`确认删除卖出池记录：${row.name}（${row.code}）？删除后不可恢复。`)) return
+    act(() => api.opsDelete(row.id).then((r) => { if (!r.ok) throw new Error(r.error || '删除失败') }), `已删除 ${row.name} 的卖出记录`)
+  }
   const ignore = (pool, c) =>
     act(() => api.opsIgnore(pool, c), `已移除 ${pool === 'buy' ? '买入池' : '观察池'}：${c}`)
   const addWatch = () => {
@@ -81,6 +85,8 @@ export default function OpsPage({ route, params, nav, goStock }) {
           white-space:normal; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; overflow:hidden; cursor:pointer; }
         .ops-reason-full{ margin:0; line-height:1.7; font-size:12.5px; color:#dde7fb; word-break:break-word;
           white-space:normal; overflow:visible; }
+        .ops-long{ white-space:normal; word-break:break-word; line-height:1.65; font-size:12.5px; color:#c6d3ea;
+          min-width:190px; max-width:360px; }
         .ops-reason:hover{ color:#e9effc; }
         .ops-more{ display:inline-block; margin-left:4px; font-size:11.5px; color:var(--accent2); cursor:pointer; user-select:none; }
         .ops-more:hover{ text-decoration:underline; }
@@ -162,11 +168,11 @@ export default function OpsPage({ route, params, nav, goStock }) {
                         <td className="num">{r.entry_price != null ? fmt(r.entry_price) : '—'}</td>
                         <td className="num">{r.last_price != null ? fmt(r.last_price) : '—'}</td>
                         <td>{r.live_pct != null ? <PctText value={r.live_pct} /> : '—'}</td>
-                        <td className="wrap-cell" style={{ maxWidth: 320 }} title={r.reason}>{r.reason}</td>
+                        <td className="ops-long" title={r.reason}>{r.reason}</td>
                         <td>
                           <div className="ops-act">
                             <button className="btn btn-sm" onClick={() => goStock(r.code)}>查看</button>
-                            <button className="btn btn-sm btn-danger" disabled={!tradeOpen} title={tradeOpen ? '按当前价了结并结算' : '仅 09:25–14:59 交易时段可买卖'} onClick={() => manualSell(r.code)}>
+                            <button className="btn btn-sm btn-danger" onClick={() => manualSell(r.code)} title={tradeOpen ? '按当前价了结并结算' : '仅 09:25–14:59 交易时段可买卖'} disabled={!tradeOpen}>
                               {tradeOpen ? '了结' : '暂停'}
                             </button>
                             <button className="btn btn-sm btn-ghost" onClick={() => ignore('buy', r.code)}>忽略</button>
@@ -188,28 +194,34 @@ export default function OpsPage({ route, params, nav, goStock }) {
                   <thead><tr>
                     <SortTh label="名称" sortKey="name" sort={sSort} />
                     <SortTh label="买入时间" sortKey="entry_time" sort={sSort} />
-                    <SortTh label="卖出时间" sortKey="exit_time" sort={sSort} />
                     <SortTh label="买入价" sortKey="entry_price" sort={sSort} />
+                    <SortTh label="卖出时间" sortKey="exit_time" sort={sSort} />
                     <SortTh label="卖出价" sortKey="exit_price" sort={sSort} />
                     <SortTh label="盈利%" sortKey="pnl_pct" sort={sSort} />
                     <SortTh label="持有" sortKey="hold_days" sort={sSort} />
                     <th>当初买入（买点/理由）</th>
                     <th>卖出理由</th>
+                    <th>操作</th>
                   </tr></thead>
                   <tbody>
                     {sells.map((r) => (
                       <tr key={r.id}>
                         <td><b><span className="link" onClick={() => goStock(r.code)}>{r.name}</span></b><div className="muted2 small">{r.code}</div></td>
                         <td className="num">{dateShort(r.entry_time)}<div className="muted2 small">{timeShort(r.entry_time)}</div></td>
+                        <td className="num" style={{ fontWeight: 600 }}>{r.entry_price != null ? fmt(r.entry_price) : '—'}</td>
                         <td className="num">{dateShort(r.exit_time)}<div className="muted2 small">{timeShort(r.exit_time)}</div></td>
-                        <td className="num">{r.entry_price != null ? fmt(r.entry_price) : '—'}</td>
-                        <td className="num">{r.exit_price != null ? fmt(r.exit_price) : '—'}</td>
+                        <td className="num" style={{ fontWeight: 600 }}>{r.exit_price != null ? fmt(r.exit_price) : '—'}</td>
                         <td><PctText value={r.pnl_pct} /></td>
                         <td className="num">{r.hold_days != null ? `${r.hold_days}天` : '—'}</td>
-                        <td className="wrap-cell" style={{ maxWidth: 280 }} title={r.reason}>
+                        <td className="ops-long" title={r.reason}>
                           <span className="muted2 small">{r.signal ? `${r.signal} · ` : ''}</span>{r.reason}
                         </td>
-                        <td className="wrap-cell" style={{ maxWidth: 280 }} title={r.exit_reason}>{r.exit_reason}</td>
+                        <td className="ops-long" title={r.exit_reason}>{r.exit_reason}</td>
+                        <td>
+                          <div className="ops-act">
+                            <button className="btn btn-sm btn-danger" title="删除该条卖出记录（管理用）" onClick={() => delSell(r)}>删除</button>
+                          </div>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
