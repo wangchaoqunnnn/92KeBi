@@ -446,7 +446,8 @@ def overview():
             "avg_loss_pct": round(sum(r["pnl_pct"] for r in loss) / len(loss), 2) if loss else None,
             "avg_hold_days": round(sum((r["hold_days"] or 0) for r in sell_rows) / len(sell_rows), 1) if sell_rows else None,
         },
-        "buy": [_row_view(r) for r in buy_rows],
+        "buy": [dict(_row_view(r), last_price=r.get("last_price"), live_pct=r.get("live_pct"))
+                for r in buy_rows],
         "sell": [_row_view(r) for r in sell_rows],
         "watch": [_row_view(r) for r in watch_rows],
         "prompts": [{"code": p["code"], "name": p["name"], "type": p["type"],
