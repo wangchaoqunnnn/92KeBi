@@ -31,7 +31,6 @@ export const api = {
   opsManualSell: (code) => req(`/api/ops/manual-sell?code=${code}`, { method: 'POST', body: '{}' }),
   opsManualWatch: (code) => req(`/api/ops/manual-watch?code=${code}`, { method: 'POST', body: '{}' }),
   opsDelete: (itemId) => req(`/api/ops/delete?item_id=${itemId}`, { method: 'POST', body: '{}' }),
-  opsDemoSell: () => req('/api/ops/demo-sell', { method: 'POST', body: '{}' }),
 
   overview: () => req('/api/dashboard/overview'),
   sectors: () => req('/api/dashboard/sectors'),

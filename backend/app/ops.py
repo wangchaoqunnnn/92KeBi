@@ -85,77 +85,6 @@ def _today():
     return datetime.now().strftime("%Y-%m-%d")
 
 
-# ---------------------------------------------------------------- 演示数据(卖出池样例)
-def _insert_demo_sell(code, name, sector, entry_price, entry_day, entry_tm,
-                      exit_day, exit_tm, exit_price, buy_reason, exit_reason, tag):
-    """插入一条卖出池模拟数据并推送微信群(可重复调用, 每次新增1条)"""
-    now = _now()
-    pnl = round((float(exit_price) / float(entry_price) - 1) * 100, 2)
-    note = f"[演示样例·{tag}，仅供查看卖出池布局与推送效果，可忽略不计入实盘]"
-    try:
-        with db.tx() as con:
-            cur = con.execute(
-                "INSERT INTO ops_items(code,name,sector,pool,status,strategy,signal,reason,"
-                "entry_date,entry_time,entry_price,exit_date,exit_time,exit_price,exit_reason,"
-                "pnl_pct,hold_days,created_at,updated_at,last_date,note) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (code, name, sector, "sell", "closed", "demo", tag, buy_reason,
-                 entry_day, entry_tm, float(entry_price), exit_day, exit_tm,
-                 float(exit_price), exit_reason, pnl, 1, now, now, exit_day, note))
-            row_id = cur.lastrowid
-        row = db.query_one("SELECT * FROM ops_items WHERE id=?", (row_id,))
-        log.info("demo sell row inserted id=%s %s", row_id, name)
-        # 卖出池数据变化 → 立即推送
-        res = _notify_sell_change(row, tag=f"演示结算（{tag}）",
-                                  extra=f"说明：模拟数据，仅供查看布局/推送")
-        return {"ok": True, "id": row_id, "code": code, "name": name,
-                "pnl_pct": pnl, "push": res}
-    except Exception as e:
-        log.warning("insert demo sell: %s", e)
-        return {"ok": False, "error": str(e)[:150]}
-
-
-def add_demo_sell():
-    """手动新增一条卖出池模拟数据(循环使用多个示例标的, 避免与现有记录重复)"""
-    setup()
-    existing = {r["code"] for r in db.query("SELECT code FROM ops_items WHERE pool='sell'")}
-    # (code,name,sector, entry_price, entry_day, entry_tm, exit_day, exit_tm, exit_price, 买入理由, 卖出理由, 标签)
-    demos = [
-        ("601989", "中国重工", "船舶制造", 4.98, "2026-09-02", "09:37:12",
-         "2026-09-04", "14:02:55", 5.19,
-         "低位首板确认：船舶板块走强，补涨逻辑（演示样例）",
-         "冲高滞涨/量能衰减，止盈离场（演示样例）", "船舶补涨"),
-        ("600150", "中国船舶", "船舶制造", 32.45, "2026-09-03", "10:05:31",
-         "2026-09-04", "11:23:08", 33.10,
-         "板块龙头企稳，跟随买点（演示样例）",
-         "板块分歧/龙头减速，落袋为安（演示样例）", "龙头跟买"),
-        ("600685", "中船防务", "船舶制造", 22.18, "2026-09-03", "13:44:20",
-         "2026-09-04", "10:41:47", 21.35,
-         "回踩低吸买点（演示样例）",
-         "跌破止损线-5%，止损离场（演示样例）", "回踩低吸"),
-    ]
-    for d in demos:
-        if d[0] not in existing:
-            return _insert_demo_sell(*d)
-    return {"ok": False, "error": "示例标的均已存在(可先删除部分卖出池记录再试)"}
-
-
-def _ensure_demo_sell():
-    """首次启动向卖出池插入1条演示数据(自动+推送), 便于查看卖出池结构/统计"""
-    try:
-        if db.meta_get("ops_demo_sell_v1"):
-            return
-        res = _insert_demo_sell(
-            "000592", "平潭发展", "农林牧渔", 6.98, "2026-09-03", "09:41:07",
-            "2026-09-04", "13:22:41", 7.12,
-            "低位首板确认：低位首板涨停，题材与主线一致 → 补涨买点（演示样例）",
-            "加速一致/一致转分歧，止盈离场（演示样例）", "系统初始化")
-        if res.get("ok"):
-            db.meta_set("ops_demo_sell_v1", "1")
-    except Exception as e:
-        log.warning("demo sell: %s", e)
-
-
 # ---------------------------------------------------------------- 微信推送
 def _hooks():
     """Webhook 来源: 环境变量 WECHAT_WEBHOOK + 运行期文件 data/wechat_webhook.txt(推荐,不入git) + DB meta"""
@@ -268,7 +197,7 @@ def _notify_buy_change(code, name, sector, price, signal, reason, when, tag="新
 
 
 def _notify_sell_change(r, tag="自动结算", extra=None):
-    """r: ops_items sell 行(dict); tag: 自动结算/手动结算/演示结算/删除等"""
+    """r: ops_items sell 行(dict); tag: 自动结算/手动结算/删除等"""
     lines = [
         f"{r.get('name') or r.get('code')}（{r.get('code')}）{r.get('sector') or ''}",
         f"买入 {r.get('entry_date') or '—'} {r.get('entry_time') or ''} @ {_fmt_num(r.get('entry_price'))}"
@@ -337,7 +266,6 @@ def _watch_codes():
 def sweep(view=None, ctx=None):
     """自动盯盘: 买点→买入池; 持仓卖点→卖出池; 模式候选→观察池。幂等、低写入。"""
     setup()
-    _ensure_demo_sell()
     if not view or not ctx:
         view, ctx = _signal_view()
     if not view or not ctx or not ctx.get("feats"):

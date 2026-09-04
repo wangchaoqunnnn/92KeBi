@@ -71,18 +71,6 @@ export default function OpsPage({ route, params, nav, goStock }) {
   }
   const [openR, setOpenR] = useState({})
   const toggleReason = (id) => setOpenR((m) => ({ ...m, [id]: !m[id] }))
-  const addDemoSell = () => {
-    if (!window.confirm('新增一条卖出池模拟数据（仅演示布局/推送效果）？')) return
-    act(async () => {
-      const r = await api.opsDemoSell()
-      if (!r.ok) throw new Error(r.error || '新增失败')
-      const push = r.push || {}
-      const pushTxt = push.sent > 0
-        ? '✅已推送微信群'
-        : `❌微信未送达：${(push.reason || '未知原因').slice(0, 120)}`
-      window.alert(`已新增模拟结算：${r.name}（${r.code}） 盈亏 ${fmt(r.pnl_pct, 2)}%\n${pushTxt}`)
-    })
-  }
 
   const timeShort = (t) => (t || '').slice(11, 19)
   const dateShort = (t) => (t || '').slice(0, 10)
@@ -213,12 +201,7 @@ export default function OpsPage({ route, params, nav, goStock }) {
           </Card>
 
           {/* 卖出池 */}
-          <Card title={`卖出池 · 已结算 ${sells.length}`} extra={
-            <span className="ops-act">
-              <span className="muted">自动记录买入/卖出时间价格、盈亏与买卖理由</span>
-              <button className="btn btn-sm" onClick={addDemoSell} title="新增一条模拟结算数据（会触发微信群推送）">＋新增演示结算</button>
-            </span>
-          }>
+          <Card title={`卖出池 · 已结算 ${sells.length}`} extra={<span className="muted">自动记录买入/卖出时间价格、盈亏与买卖理由</span>}>
             {sells.length === 0 ? <Empty text="卖出池为空：持仓触发卖点后自动结算到这里" /> : (
               <div className="table-wrap">
                 <table className="tbl ops-tbl">
