@@ -56,6 +56,8 @@ export default function OpsPage({ route, params, nav, goStock }) {
     act(() => api.opsManualWatch(c).then((r) => { if (!r.ok) throw new Error(r.error || '加入失败') }), `已加入观察池：${c}`)
     setCode('')
   }
+  const [openR, setOpenR] = useState({})
+  const toggleReason = (id) => setOpenR((m) => ({ ...m, [id]: !m[id] }))
 
   const timeShort = (t) => (t || '').slice(11, 19)
   const dateShort = (t) => (t || '').slice(0, 10)
@@ -74,6 +76,13 @@ export default function OpsPage({ route, params, nav, goStock }) {
         .ops-act .btn{ padding:2px 8px; font-size:12px; }
         .ops-watch-add{ display:flex; gap:6px; align-items:center; }
         .ops-watch-add input{ width:130px; }
+        .ops-reason-cell{ min-width:220px; max-width:440px; }
+        .ops-reason{ margin:0; line-height:1.6; font-size:12.5px; color:#b9c6dd; word-break:break-word;
+          display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; overflow:hidden; cursor:pointer; }
+        .ops-reason.open{ -webkit-line-clamp:unset; display:block; overflow:visible; }
+        .ops-reason:hover{ color:#e9effc; }
+        .ops-more{ display:inline-block; margin-left:4px; font-size:11.5px; color:var(--accent2); cursor:pointer; user-select:none; }
+        .ops-more:hover{ text-decoration:underline; }
       `}</style>
 
       <div className="page-head">
@@ -230,23 +239,41 @@ export default function OpsPage({ route, params, nav, goStock }) {
                     <th>操作</th>
                   </tr></thead>
                   <tbody>
-                    {watch.map((r) => (
-                      <tr key={r.id}>
-                        <td><b><span className="link" onClick={() => goStock(r.code)}>{r.name}</span></b><div className="muted2 small">{r.code} · {r.sector}</div></td>
-                        <td className="num" style={{ fontWeight: 700, color: (r.score ?? -1) >= 70 ? 'var(--gold)' : (r.score ?? -1) >= 55 ? '#7aa9ff' : undefined }}>
-                          {r.score != null ? fmt(r.score, 1) : '—'}
-                        </td>
-                        <td className="num">{dateShort(r.updated_at)} {timeShort(r.updated_at)}</td>
-                        <td className="num">{r.last_date || r.entry_date || '—'}</td>
-                        <td className="wrap-cell" style={{ maxWidth: 380 }} title={r.reason}>{r.reason}</td>
-                        <td>
-                          <div className="ops-act">
-                            <button className="btn btn-sm" onClick={() => goStock(r.code)}>查看</button>
-                            <button className="btn btn-sm btn-ghost" onClick={() => ignore('watch', r.code)}>移除</button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                    {watch.map((r) => {
+                      const reason = r.reason || '—'
+                      const isOpen = !!openR[r.id]
+                      const long = reason.length > 30
+                      return (
+                        <tr key={r.id}>
+                          <td><b><span className="link" onClick={() => goStock(r.code)}>{r.name}</span></b><div className="muted2 small">{r.code} · {r.sector}</div></td>
+                          <td className="num" style={{ fontWeight: 700, color: (r.score ?? -1) >= 70 ? 'var(--gold)' : (r.score ?? -1) >= 55 ? '#7aa9ff' : undefined }}>
+                            {r.score != null ? fmt(r.score, 1) : '—'}
+                          </td>
+                          <td className="num">{dateShort(r.updated_at)} {timeShort(r.updated_at)}</td>
+                          <td className="num">{r.last_date || r.entry_date || '—'}</td>
+                          <td className="ops-reason-cell">
+                            <div
+                              className={`ops-reason ${isOpen ? 'open' : ''}`}
+                              title={isOpen ? undefined : reason}
+                              onClick={(e) => { e.stopPropagation(); toggleReason(r.id) }}
+                            >
+                              {reason}
+                            </div>
+                            {long && (
+                              <span className="ops-more" onClick={(e) => { e.stopPropagation(); toggleReason(r.id) }}>
+                                {isOpen ? '收起 ▲' : '展开 ▼'}
+                              </span>
+                            )}
+                          </td>
+                          <td>
+                            <div className="ops-act">
+                              <button className="btn btn-sm" onClick={() => goStock(r.code)}>查看</button>
+                              <button className="btn btn-sm btn-ghost" onClick={() => ignore('watch', r.code)}>移除</button>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
