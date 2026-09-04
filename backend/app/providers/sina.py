@@ -165,7 +165,7 @@ def fetch_industry_map(industries, threads=8):
 
 
 # ---------------------------------------------------------------- 批量实时行情(hq)
-HQ_CHUNK = 900  # 每请求代码数(URL 容量范围内取大, 减少请求数降低延迟)
+HQ_CHUNK = 380  # 新浪 hq URL 上限敏感, 380/请求较稳(更大易触发 HTTP 431)
 
 
 def _hq_one(chunk, timeout, tries):

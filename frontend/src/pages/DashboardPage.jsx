@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { api } from '../api'
-import { Card, Stat, Tag, Meter, Empty, Loading, ErrorBox, PctText } from '../components/ui'
+import { Card, Stat, Tag, Meter, Empty, Loading, ErrorBox, PctText, useTableSort, sortRows, SortTh } from '../components/ui'
 import EChart, { TOOLTIP, axisCommon, AXIS_TEXT } from '../components/EChart'
 import { PHASE_META, PHASE_KEYS, UP, DOWN, fmt, fmtPct, fmtAmountYi } from '../format'
 
@@ -232,6 +232,75 @@ function mergePhaseBlocks(hist) {
   return out
 }
 
+/* ================================================================
+ * 情绪阶段时间轴(同“情绪面”图表做法): x=交易日, y=阶段档位阶梯线,
+ * 每日期货色散点着色, 今日竖线标记; 悬停查看当日阶段/涨跌停统计
+ */
+const PHASE_LEVEL = { main_decline: 0, probe: 1, high_oscillate: 2, main_ascend: 3 }
+const PHASE_LEVEL_CN = ['主跌阶段', '低位震荡/试错期', '高位震荡', '主升阶段']
+
+function phaseLadderOption(hist) {
+  const dates = hist.map((r) => r.date)
+  const levels = hist.map((r) => PHASE_LEVEL[r.phase] != null ? PHASE_LEVEL[r.phase] : 0)
+  const colorBy = hist.map((r) => (PHASE_META[r.phase] || { color: BLUE }).color)
+  return {
+    color: ['#cdd9f0'],
+    tooltip: {
+      ...TOOLTIP,
+      trigger: 'axis',
+      axisPointer: { type: 'cross', label: { color: '#0d1421', backgroundColor: AXIS_TEXT } },
+      formatter: (ps) => {
+        if (!ps || !ps.length) return ''
+        const i = ps[0].dataIndex
+        const r = hist[i]
+        if (!r) return ''
+        const m = PHASE_META[r.phase] || { label: r.phase, color: BLUE }
+        return `<div style="font-weight:700;margin-bottom:3px;">${r.date}</div>
+          <div>阶段 <b style="color:${m.color}">${m.label}</b></div>
+          <div style="margin-top:3px;">涨停 ${r.zt} / 跌停 ${r.dt} · 最高 ${r.max_streak} 板 · 炸板率 ${r.explosion ?? '—'}%</div>`
+      },
+    },
+    legend: { show: false },
+    grid: { left: 8, right: 14, top: 14, bottom: 8, containLabel: true },
+    xAxis: {
+      type: 'category', data: dates,
+      ...axisCommon(true),
+      axisLabel: { color: AXIS_TEXT, fontSize: 10, interval: 'auto', hideOverlap: true },
+    },
+    yAxis: {
+      type: 'category', data: PHASE_LEVEL_CN,
+      ...axisCommon(false),
+      splitLine: { show: false },
+      axisLabel: { color: AXIS_TEXT, fontSize: 11 },
+    },
+    series: [
+      {
+        name: '情绪阶段',
+        type: 'line',
+        step: 'middle',
+        data: levels,
+        symbol: 'circle',
+        symbolSize: 5,
+        lineStyle: { color: '#9fb2d4', width: 2 },
+        itemStyle: { color: '#cdd9f0' },
+        markLine: {
+          silent: true, symbol: 'none',
+          lineStyle: { color: 'rgba(242,193,78,.85)', width: 2 },
+          label: { show: true, position: 'insideEndTop', color: '#f2c14e', fontSize: 10, formatter: '今日' },
+          data: [{ xAxis: dates[dates.length - 1] }],
+        },
+      },
+      {
+        name: '阶段着色',
+        type: 'scatter',
+        data: levels.map((v, i) => ({ value: v, itemStyle: { color: colorBy[i], opacity: 0.95 } })),
+        symbolSize: 9,
+        tooltip: { show: false },
+      },
+    ],
+  }
+}
+
 function PhaseTimeline({ hist }) {
   const blocks = useMemo(() => mergePhaseBlocks(hist || []), [hist])
   if (!blocks.length) return null
@@ -424,6 +493,8 @@ export default function DashboardPage({ route, params, nav, goStock }) {
   const gaugeOpt = useMemo(() => gaugeOption(phase.conf, pc), [phase.conf, pc])
   const emoOpt = useMemo(() => (hist.length ? emotionOption(hist) : null), [hist])
   const proOpt = useMemo(() => (hist.length ? profitOption(hist) : null), [hist])
+  const plOpt = useMemo(() => (hist.length ? phaseLadderOption(hist) : null), [hist])
+  const secSort = useTableSort('avg_pct')
 
   if (err && !ov) {
     return (
@@ -456,8 +527,7 @@ export default function DashboardPage({ route, params, nav, goStock }) {
     : ''
   const vol = stats.volume || null
   const secAll = secRows.length ? secRows : [...secTop, ...secBottom]
-  const secGain = secAll.filter((s) => (s.avg_pct || 0) >= 0).sort((a, b) => b.avg_pct - a.avg_pct).slice(0, 10)
-  const secFall = secAll.filter((s) => (s.avg_pct || 0) < 0).sort((a, b) => a.avg_pct - b.avg_pct).slice(0, 5)
+  const sortedSecs = sortRows(secAll, secSort.key, secSort.dir)
 
   return (
     <div className="page">
@@ -715,8 +785,22 @@ export default function DashboardPage({ route, params, nav, goStock }) {
         </Card>
       </div>
       {hist.length > 0 && (
-        <Card title="情绪周期时间轴" extra={<span className="muted">近 {hist.length} 个交易日 · 同色段 = 同一情绪阶段 · 悬停查看该阶段统计</span>}>
-          <PhaseTimeline hist={hist} />
+        <Card title="情绪周期时间轴" extra={<span className="muted">近 {hist.length} 个交易日 · 阶梯线=阶段迁移 · 悬停查看当日</span>}>
+          {plOpt ? (
+            <>
+              <EChart option={plOpt} height={220} />
+              <div className="dash-tl2-legend">
+                {PHASE_KEYS.map((k) => (
+                  <span key={k}><i style={{ background: PHASE_META[k].color }} />{PHASE_META[k].label}</span>
+                ))}
+                <span className="muted" style={{ marginLeft: 'auto' }}>
+                  下→上为情绪由冷转热：主跌→试错→主升→高位震荡
+                </span>
+              </div>
+            </>
+          ) : (
+            <Empty text="暂无历史数据" />
+          )}
         </Card>
       )}
 
@@ -734,20 +818,18 @@ export default function DashboardPage({ route, params, nav, goStock }) {
           <table className="tbl dash-sec-tbl">
             <thead>
               <tr>
-                <th>板块</th><th>涨跌幅</th><th>今涨停</th><th>5日涨停</th>
-                <th>成交额</th><th>量能(较昨同时段)</th><th />
+                <SortTh label="板块" sortKey="sector" sort={secSort} />
+                <SortTh label="涨跌幅" sortKey="avg_pct" sort={secSort} />
+                <SortTh label="今涨停" sortKey="zt_today" sort={secSort} />
+                <SortTh label="5日涨停" sortKey="zt_5d" sort={secSort} />
+                <SortTh label="成交额" sortKey="amount" sort={secSort} />
+                <SortTh label="量能(较昨同时段)" sortKey="vol_ratio" sort={secSort} />
+                <th />
               </tr>
             </thead>
             <tbody>
-              <tr className="dash-sep"><td colSpan={7}>涨幅居前 · 资金主攻方向</td></tr>
-              {secGain.length === 0 && <tr><td colSpan={7}><Empty text="暂无板块数据" /></td></tr>}
-              {secGain.map((s) => (
-                <SectorRow key={s.sector} s={s} open={ztOpen === s.sector}
-                  busy={ztBusy} err={ztErr} detail={ztMap[s.sector]}
-                  onToggle={() => toggleZt(s.sector)} goStock={goStock} />
-              ))}
-              {secFall.length > 0 && <tr className="dash-sep"><td colSpan={7}>跌幅居前 · 回避方向</td></tr>}
-              {secFall.map((s) => (
+              {sortedSecs.length === 0 && <tr><td colSpan={7}><Empty text="暂无板块数据" /></td></tr>}
+              {sortedSecs.map((s) => (
                 <SectorRow key={s.sector} s={s} open={ztOpen === s.sector}
                   busy={ztBusy} err={ztErr} detail={ztMap[s.sector]}
                   onToggle={() => toggleZt(s.sector)} goStock={goStock} />
@@ -756,8 +838,9 @@ export default function DashboardPage({ route, params, nav, goStock }) {
           </table>
         </div>
         <div className="muted small" style={{ marginTop: 8, color: '#5f7598' }}>
-          分层口径说明：龙头 = 板块内今日最高连板且成交额居前；同高/中位 = 跟风（忌讳追高）；
-          首板 = 补涨/试错观察；板块高标(anchors)今日未封板表示总龙断板/歇整，注意“断板即撤”。
+          点击表头排序（当前：{secSort.key}，{secSort.dir === 'asc' ? '升序' : '降序'}）· 点击板块行展开今日涨停股分层；
+          分层口径：龙头 = 今日最高连板且成交额居前；同高/中位 = 跟风（忌讳追高）；首板 = 补涨/试错观察；
+          板块高标(anchors)今日未封板表示总龙断板/歇整，注意“断板即撤”。
         </div>
       </Card>
 

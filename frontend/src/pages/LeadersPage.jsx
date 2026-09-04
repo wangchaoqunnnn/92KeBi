@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { api } from '../api'
-import { Card, Tag, Meter, Empty, Loading, ErrorBox, PctText, ConditionList } from '../components/ui'
+import { Card, Tag, Meter, Empty, Loading, ErrorBox, PctText, ConditionList, useTableSort, sortRows, SortTh } from '../components/ui'
 import EChart, { TOOLTIP, axisCommon, AXIS_TEXT } from '../components/EChart'
 import { UP, DOWN, FLAT, fmt } from '../format'
 
@@ -166,6 +166,7 @@ export default function LeadersPage({ route, params, nav, goStock }) {
   const kRows = st && st.kline && st.kline.length ? st.kline.slice(-120) : []
   const cndOpt = useMemo(() => (kRows.length ? candleOption(kRows) : null), [kRows])
   const hisOpt = useMemo(() => (hist && hist.length ? historyOption(hist) : null), [hist])
+  const ldSort = useTableSort('score')
 
   if (err && !ld) {
     return (
@@ -178,6 +179,7 @@ export default function LeadersPage({ route, params, nav, goStock }) {
 
   const dragon = ld.dragon || null
   const sectLeaders = ld.sector_leaders || []
+  const sortedLeaders = sortRows(sectLeaders, ldSort.key, ldSort.dir)
 
   return (
     <div className="page">
@@ -311,18 +313,18 @@ export default function LeadersPage({ route, params, nav, goStock }) {
             <table className="tbl">
               <thead>
                 <tr>
-                  <th>板块龙头</th>
-                  <th>板块</th>
-                  <th>评分</th>
-                  <th>最高20日连板</th>
-                  <th>今日</th>
-                  <th>60日涨幅</th>
-                  <th>换手</th>
+                  <SortTh label="板块龙头" sortKey="name" sort={ldSort} />
+                  <SortTh label="板块" sortKey="sector" sort={ldSort} />
+                  <SortTh label="评分" sortKey="score" sort={ldSort} />
+                  <SortTh label="最高20日连板" sortKey="streak" sort={ldSort} />
+                  <SortTh label="今日" sortKey="pct_today" sort={ldSort} />
+                  <SortTh label="60日涨幅" sortKey="run60" sort={ldSort} />
+                  <SortTh label="换手" sortKey="turnover" sort={ldSort} />
                   <th>状态</th>
                 </tr>
               </thead>
               <tbody>
-                {sectLeaders.map((x) => (
+                {sortedLeaders.map((x) => (
                   <tr key={x.code}>
                     <td className="ldr-st-name">
                       <b><span className="link" onClick={() => goStock(x.code)}>{x.name}</span></b>

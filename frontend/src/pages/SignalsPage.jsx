@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
-import { Card, Tag, Empty, Loading, ErrorBox, PctText } from '../components/ui'
+import { Card, Tag, Empty, Loading, ErrorBox, PctText, useTableSort, sortRows, SortTh } from '../components/ui'
 import { fmt } from '../format'
 
 /* ================= 买卖信号看板 U-05 ================= */
@@ -80,6 +80,8 @@ export default function SignalsPage({ route, params, nav, goStock }) {
       (it) => (dir === 'all' || it.dir === dir) && (strat === 'all' || it.strategy === strat)
     )
   }, [data, dir, strat])
+  const sigSort = useTableSort(null)
+  const shown = sortRows(filtered, sigSort.key, sigSort.dir)
 
   if (err) return <ErrorBox error={err} onRetry={load} />
   if (!data) return <Loading />
@@ -147,18 +149,18 @@ export default function SignalsPage({ route, params, nav, goStock }) {
             <table className="tbl">
               <thead>
                 <tr>
-                  <th>信号</th>
-                  <th>标的</th>
-                  <th>策略</th>
-                  <th>方向</th>
-                  <th>强度</th>
-                  <th>现价</th>
-                  <th>当日涨幅</th>
+                  <SortTh label="信号" sortKey="signal" sort={sigSort} />
+                  <SortTh label="标的" sortKey="name" sort={sigSort} />
+                  <SortTh label="策略" sortKey="strategy_cn" sort={sigSort} />
+                  <SortTh label="方向" sortKey="dir" sort={sigSort} />
+                  <SortTh label="强度" sortKey="strength" sort={sigSort} />
+                  <SortTh label="现价" sortKey="price" sort={sigSort} />
+                  <SortTh label="当日涨幅" sortKey="pct_today" sort={sigSort} />
                   <th>触发理由</th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((it, i) => {
+                {shown.map((it, i) => {
                   return (
                     <tr key={`${it.code}-${it.signal}-${it.date}-${i}`}>
                       <td className="sig-name-cell">

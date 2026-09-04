@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 
 /* 基础 UI 原语：Card / Stat / Tag / Meter / Section / Empty / Loading / PctText / ConditionList */
 
@@ -99,5 +99,53 @@ export function ConditionList({ items, dense = false }) {
         </li>
       ))}
     </ul>
+  )
+}
+
+/* ---------------- 表格表头排序 ----------------
+ * 用法:
+ *   const sort = useTableSort('score')          // {key, dir, toggle}
+ *   <table> <thead><tr>
+ *     <SortTh label="评分" sortKey="score" sort={sort} />
+ *   ... rows = sortRows(rows, sort.key, sort.dir)
+ */
+export function useTableSort(defaultKey = null) {
+  const [key, setKey] = useState(defaultKey)
+  const [dir, setDir] = useState('desc')
+  const toggle = (k) => {
+    if (k === key) setDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    else { setKey(k); setDir('desc') }
+  }
+  return { key, dir, toggle }
+}
+
+export function sortRows(rows, key, dir) {
+  if (!key || !rows) return rows
+  const cmp = (a, b) => {
+    const av = a && a[key]
+    const bv = b && b[key]
+    if (av === null || av === undefined || av === '') return 1
+    if (bv === null || bv === undefined || bv === '') return -1
+    const an = Number(av)
+    const bn = Number(bv)
+    if (Number.isFinite(an) && Number.isFinite(bn) && !Number.isNaN(an) && !Number.isNaN(bn)) return an - bn
+    return String(av).localeCompare(String(bv), 'zh-Hans-CN')
+  }
+  const out = [...rows].sort(cmp)
+  return dir === 'desc' ? out.reverse() : out
+}
+
+export function SortTh({ label, sortKey, sort, style }) {
+  const active = sort && sort.key === sortKey
+  const arrow = active ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ''
+  return (
+    <th
+      className="sortable"
+      onClick={sort ? () => sort.toggle(sortKey) : undefined}
+      style={{ userSelect: 'none', ...style }}
+    >
+      {label}
+      <span className={`th-sort ${active ? 'active' : ''}`}>{active ? arrow : ' ⇅'}</span>
+    </th>
   )
 }

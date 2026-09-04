@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
-import { Card, Tag, Empty, Loading, ErrorBox, PctText } from '../components/ui'
+import { Card, Tag, Empty, Loading, ErrorBox, PctText, useTableSort, sortRows, SortTh } from '../components/ui'
 import EChart, { TOOLTIP, axisCommon } from '../components/EChart'
 import { fmt, fmtPct, clsPct, fmtDate } from '../format'
 
@@ -115,6 +115,8 @@ export default function BacktestPage({ route, params, nav, goStock }) {
   const range = meta && Array.isArray(meta.range) ? meta.range : null
   const endDate = range && range[1] ? range[1] : ''
   const modes = meta && Array.isArray(meta.modes) ? meta.modes : []
+  const tdSort = useTableSort('exit_date')
+  const sortedTrades = result ? sortRows(result.trades || [], tdSort.key, tdSort.dir) : []
 
   const run = () => {
     setRunning(true)
@@ -399,21 +401,21 @@ export default function BacktestPage({ route, params, nav, goStock }) {
                   <table className="tbl">
                     <thead>
                       <tr>
-                        <th>代码</th>
-                        <th>名称</th>
-                        <th>策略</th>
-                        <th>买入日</th>
-                        <th>卖出日</th>
-                        <th>买入价</th>
-                        <th>卖出价</th>
-                        <th>收益率</th>
-                        <th>盈亏额</th>
-                        <th>持有</th>
+                        <SortTh label="代码" sortKey="code" sort={tdSort} />
+                        <SortTh label="名称" sortKey="name" sort={tdSort} />
+                        <SortTh label="策略" sortKey="strategy_cn" sort={tdSort} />
+                        <SortTh label="买入日" sortKey="entry_date" sort={tdSort} />
+                        <SortTh label="卖出日" sortKey="exit_date" sort={tdSort} />
+                        <SortTh label="买入价" sortKey="entry_px" sort={tdSort} />
+                        <SortTh label="卖出价" sortKey="exit_px" sort={tdSort} />
+                        <SortTh label="收益率" sortKey="pnl_pct" sort={tdSort} />
+                        <SortTh label="盈亏额" sortKey="pnl_cash" sort={tdSort} />
+                        <SortTh label="持有" sortKey="hold_days" sort={tdSort} />
                         <th>离场原因</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {(result.trades || []).map((t, i) => (
+                      {sortedTrades.map((t, i) => (
                         <tr key={`${t.code}-${t.entry_date}-${i}`}>
                           <td className="muted2">{t.code}</td>
                           <td>
