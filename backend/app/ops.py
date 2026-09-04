@@ -188,7 +188,8 @@ def _hooks():
 
 
 def _wechat_push(text):
-    """企业微信群机器人推送(支持多个webhook)。未配置则跳过。"""
+    """企业微信群机器人推送(支持多个webhook)。未配置则跳过。
+    以企业微信响应体 errcode==0 为唯一成功判据(HTTP 200 不等于送达, 失败会带 errcode)。"""
     hooks = _hooks()
     if not hooks:
         log.debug("微信 Webhook 未配置, 跳过推送")
@@ -198,16 +199,27 @@ def _wechat_push(text):
     body = {"msgtype": "text", "text": {"content": str(text)[:1900]}}
     data = _j.dumps(body, ensure_ascii=False).encode("utf-8")
     sent = 0
-    err = None
+    errs = []
     for url in hooks:
         try:
             req = _ur.Request(url, data=data, headers={"Content-Type": "application/json"})
-            _ur.urlopen(req, timeout=6)
-            sent += 1
+            resp = _ur.urlopen(req, timeout=6)
+            raw = resp.read().decode("utf-8", "ignore").strip()
+            try:
+                j = _j.loads(raw) or {}
+            except Exception:
+                j = {}
+            code = j.get("errcode")
+            if code == 0:
+                sent += 1
+            else:
+                msg = j.get("errmsg") or raw[:100] or "unknown"
+                errs.append(f"errcode={code} {msg}"[:200])
+                log.warning("wechat push rejected(%s): %s", url[-24:], msg[:120])
         except Exception as e:  # noqa
-            err = str(e)[:120]
+            errs.append(str(e)[:150])
             log.warning("wechat push fail: %s", e)
-    return {"sent": sent, "reason": err}
+    return {"sent": sent, "reason": "；".join(errs) if errs else None}
 
 
 def wechat_push_test():
@@ -233,13 +245,14 @@ def _fmt_pct(v):
 
 
 def _notify(msg):
-    """向配置的微信群推送(失败不抛异常, 记日志)"""
+    """向配置的微信群推送(失败不抛异常, 记日志并返回详细原因)"""
     try:
         res = _wechat_push(msg)
+        head = (msg.splitlines()[0] if msg else "")[:60]
         if res.get("sent", 0) > 0:
-            log.info("wechat push ok: %s", msg.splitlines()[0] if msg else "")
+            log.info("wechat push ok: %s", head)
         else:
-            log.info("wechat push skipped(%s)", res.get("reason"))
+            log.warning("wechat push NOT delivered: %s -> %s", head, res.get("reason"))
         return res
     except Exception as e:  # noqa
         log.warning("wechat notify: %s", e)

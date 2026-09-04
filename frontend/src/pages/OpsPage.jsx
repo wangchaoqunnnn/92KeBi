@@ -67,8 +67,11 @@ export default function OpsPage({ route, params, nav, goStock }) {
     act(async () => {
       const r = await api.opsDemoSell()
       if (!r.ok) throw new Error(r.error || '新增失败')
-      const push = (r.push && r.push.sent > 0) ? '✅已推送微信群' : '⚠未推送(未配置Webhook)'
-      window.alert(`已新增模拟结算：${r.name}（${r.code}） 盈亏 ${fmt(r.pnl_pct, 2)}%  ${push}`)
+      const push = r.push || {}
+      const pushTxt = push.sent > 0
+        ? '✅已推送微信群'
+        : `❌微信未送达：${(push.reason || '未知原因').slice(0, 120)}`
+      window.alert(`已新增模拟结算：${r.name}（${r.code}） 盈亏 ${fmt(r.pnl_pct, 2)}%\n${pushTxt}`)
     })
   }
 
