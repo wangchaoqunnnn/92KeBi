@@ -609,29 +609,30 @@ def overview():
 
 def ignore_item(pool, code):
     setup()
-    where = "pool=? AND code=? AND status='open'" if pool == "buy" else "pool=? AND code=?"
     if pool == "buy":
         rows = db.query("SELECT * FROM ops_items WHERE pool='buy' AND code=? AND status='open'",
                         (code,))
         n = db.execute("UPDATE ops_items SET status='ignored', updated_at=? "
                        "WHERE pool='buy' AND code=? AND status='open'", (_now(), code)).rowcount
         # 买入池数据变化 → 立即推送
+        push = {"sent": 0, "reason": None}
         if n and rows:
             row = dict(rows[0], status="ignored")
             try:
-                _notify_buy_change(code, row.get("name") or code, row.get("sector"),
-                                   row.get("entry_price"), row.get("signal"),
-                                   "人工移除：不再跟踪该持仓（已忽略）",
-                                   f"{row.get('entry_date')} {row.get('entry_time') or ''}",
-                                   tag="移除（忽略）")
+                push = _notify_buy_change(code, row.get("name") or code, row.get("sector"),
+                                          row.get("entry_price"), row.get("signal"),
+                                          "人工移除：不再跟踪该持仓（已忽略）",
+                                          f"{row.get('entry_date')} {row.get('entry_time') or ''}",
+                                          tag="移除（忽略）")
             except Exception as e:  # noqa
                 log.warning("wechat ignore push: %s", e)
-    elif pool == "watch":
+                push = {"sent": 0, "reason": str(e)[:120]}
+        return {"ok": True, "removed": n, "push": push}
+    if pool == "watch":
         n = db.execute("UPDATE ops_items SET status='archived', updated_at=? "
                        "WHERE pool='watch' AND code=? AND status='open'", (_now(), code)).rowcount
-    else:
-        n = 0
-    return {"ok": True, "removed": n}
+        return {"ok": True, "removed": n}
+    return {"ok": True, "removed": 0}
 
 
 def manual_sell(code):
@@ -658,10 +659,11 @@ def manual_sell(code):
     row = dict(r, exit_date=r["entry_date"], exit_time=now, exit_price=round(price, 2),
                exit_reason="手动了结", pnl_pct=pnl, updated_at=now)
     try:
-        _notify_sell_change(row, tag="手动结算")
+        push = _notify_sell_change(row, tag="手动结算")
     except Exception as e:  # noqa
         log.warning("wechat manual sell push: %s", e)
-    return {"ok": True, "code": code, "price": round(price, 2), "pnl_pct": pnl}
+        push = {"sent": 0, "reason": str(e)[:120]}
+    return {"ok": True, "code": code, "price": round(price, 2), "pnl_pct": pnl, "push": push}
 
 
 def manual_watch(code):
@@ -694,7 +696,9 @@ def delete_sell(item_id):
     db.execute("DELETE FROM ops_items WHERE id=?", (item_id,))
     log.info("ops delete sell id=%s name=%s", item_id, row["name"])
     try:
-        _notify_sell_change(row, tag="删除记录", extra=f"管理删除：该条卖出记录已从卖出池移除（id={item_id}）")
+        push = _notify_sell_change(row, tag="删除记录",
+                                   extra=f"管理删除：该条卖出记录已从卖出池移除（id={item_id}）")
     except Exception as e:  # noqa
         log.warning("wechat delete push: %s", e)
-    return {"ok": True, "deleted": 1, "name": row["name"]}
+        push = {"sent": 0, "reason": str(e)[:120]}
+    return {"ok": True, "deleted": 1, "name": row["name"], "push": push}

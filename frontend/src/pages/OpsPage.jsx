@@ -47,13 +47,22 @@ export default function OpsPage({ route, params, nav, goStock }) {
     }
   }
   const manualSell = (c) =>
-    act(() => api.opsManualSell(c).then((r) => { if (!r.ok) throw new Error(r.error || '无持仓') }), `已按现价了结 ${c}`)
+    act(() => api.opsManualSell(c).then((r) => {
+      if (!r.ok) throw new Error(r.error || '无持仓')
+      if (r.push && r.push.sent === 0) throw new Error(`已了结 ${c}，但微信推送失败：${(r.push.reason || '未知').slice(0, 120)}`)
+    }), `已按现价了结 ${c}`)
   const delSell = (row) => {
     if (!window.confirm(`确认删除卖出池记录：${row.name}（${row.code}）？删除后不可恢复。`)) return
-    act(() => api.opsDelete(row.id).then((r) => { if (!r.ok) throw new Error(r.error || '删除失败') }), `已删除 ${row.name} 的卖出记录`)
+    act(() => api.opsDelete(row.id).then((r) => {
+      if (!r.ok) throw new Error(r.error || '删除失败')
+      if (r.push && r.push.sent === 0) throw new Error(`已删除 ${row.name}，但微信推送失败：${(r.push.reason || '未知').slice(0, 120)}`)
+    }), `已删除 ${row.name} 的卖出记录`)
   }
   const ignore = (pool, c) =>
-    act(() => api.opsIgnore(pool, c), `已移除 ${pool === 'buy' ? '买入池' : '观察池'}：${c}`)
+    act(() => api.opsIgnore(pool, c).then((r) => {
+      if (!r.ok) throw new Error(r.error || '移除失败')
+      if (pool === 'buy' && r.push && r.push.sent === 0) throw new Error(`已移除 ${c}，但微信推送失败：${(r.push.reason || '未知').slice(0, 120)}`)
+    }), `已移除 ${pool === 'buy' ? '买入池' : '观察池'}：${c}`)
   const addWatch = () => {
     const c = code.trim()
     if (!/^\d{6}$/.test(c)) { alert('请输入 6 位股票代码'); return }
