@@ -380,43 +380,70 @@ def _store_refresh(quotes, src, ms, full):
 
 
 def _sector_5d_series():
-    """基于样本池日K(近6个交易日)计算板块: 5日涨幅(%)与连续涨/跌天数。
-    某日板块有效成员<3 视为该日无有效数据(板块样本覆盖不足时返回 None)。"""
+    """近6个交易日板块日收益序列(旧→新), 用于 5日涨幅 & 连涨跌。
+    最新交易日(quote_date)使用全市场实时/收盘聚合(所有成员, 与页面“今日涨跌幅”一致),
+    更早日用样本池日K(板块当日有效样本>=3才计值; 不足该日为空 → 5日或连涨受影响时显示—)。
+    """
     try:
-        dates = [r["date"] for r in db.query(
-            "SELECT DISTINCT date FROM bars ORDER BY date DESC LIMIT 6")]
-        if len(dates) < 5:
-            return {}
-        lo, hi = dates[-1], dates[0]
+        from datetime import date as _date
+        qd = _state.get("quote_date") or ""
+        hist_dates = [r["date"] for r in db.query(
+            "SELECT DISTINCT date FROM bars WHERE date<? ORDER BY date DESC LIMIT 6", (qd,))]
         c2i = get_industry_cache().get("code2industry", {})
-        day_ind = {}
-        for b in db.query("SELECT date, code, pct FROM bars WHERE date BETWEEN ? AND ?",
-                          (lo, hi)):
-            ind = c2i.get(b["code"])
-            if not ind:
-                continue
-            day_ind.setdefault(b["date"], {}).setdefault(ind, []).append(b["pct"])
-        order = sorted(day_ind.keys())
-        avg = {d: {} for d in order}
-        for d in order:
-            for ind, pcts in day_ind[d].items():
-                if len(pcts) >= 3:
-                    avg[d][ind] = sum(pcts) / len(pcts)
+        day_pct = {}   # date -> {industry: pct均值(样本K线)}
+        if hist_dates:
+            lo, hi = hist_dates[-1], hist_dates[0]
+            bucket = {}
+            for b in db.query("SELECT date, code, pct FROM bars WHERE date BETWEEN ? AND ?",
+                              (lo, hi)):
+                ind = c2i.get(b["code"])
+                if not ind:
+                    continue
+                bucket.setdefault(b["date"], {}).setdefault(ind, []).append(b["pct"])
+            for d in sorted(bucket):
+                day_pct[d] = {ind: round(sum(ps) / len(ps), 4)
+                              for ind, ps in bucket[d].items() if len(ps) >= 3}
+        # 最新交易日: 全市场实时聚合(与榜单今日口径一致)
+        quotes = _state.get("quotes") or {}
+        if qd and quotes:
+            live = {}
+            for c, q in quotes.items():
+                ind = c2i.get(c)
+                p = q.get("pct")
+                if not ind or p is None:
+                    continue
+                live.setdefault(ind, []).append(p)
+            day_pct[qd] = {ind: round(sum(ps) / len(ps), 4)
+                           for ind, ps in live.items() if len(ps) >= 3}
+        elif qd and qd not in day_pct:
+            # 行情快照暂缺时, 退化为使用样本K线中当日收盘(尽力)
+            try:
+                bucket = {}
+                for b in db.query("SELECT code, pct FROM bars WHERE date=?", (qd,)):
+                    ind = c2i.get(b["code"])
+                    if ind:
+                        bucket.setdefault(ind, []).append(b["pct"])
+                day_pct[qd] = {ind: round(sum(ps) / len(ps), 4)
+                               for ind, ps in bucket.items() if len(ps) >= 3}
+            except Exception:
+                pass
+        order = sorted(day_pct.keys())
+        if len(order) < 5:
+            return {}
         out = {}
-        for ind in set(x for d in order for x in avg[d]):
-            vals = [avg[d].get(ind) for d in order if avg[d].get(ind) is not None]
-            # 5日累计涨幅(复利近似, 需5日齐全)
+        for ind in set(x for d in order for x in day_pct[d]):
+            vals = [day_pct[d].get(ind) for d in order]
+            present = [v for v in vals if v is not None]
+            # 5日累计涨幅(复利, 需最近5个交易日数据齐全)
             avg5 = None
-            if len(vals) >= 5:
+            if len(present) >= 5:
                 cum = 1.0
-                for v in vals[-5:]:
+                for v in present[-5:]:
                     cum *= 1 + v / 100
                 avg5 = round((cum - 1) * 100, 2)
-            # 连续涨/跌(从最新日回数, 0视为结束)
+            # 连续涨/跌: 从最新(今日)起向历史回数同向
             streak_n, streak_dir = 0, None
-            i = len(vals) - 1
-            while i >= 0:
-                v = vals[i]
+            for v in reversed(vals):
                 if v is None:
                     break
                 d = 1 if v > 0 else -1 if v < 0 else 0
@@ -427,11 +454,7 @@ def _sector_5d_series():
                 if d != (1 if streak_dir == "up" else -1):
                     break
                 streak_n += 1
-                i -= 1
-            if streak_dir and streak_n:
-                out[ind] = {"avg5_pct": avg5, "streak_n": streak_n, "streak_dir": streak_dir}
-            else:
-                out[ind] = {"avg5_pct": avg5, "streak_n": 0, "streak_dir": None}
+            out[ind] = {"avg5_pct": avg5, "streak_n": streak_n, "streak_dir": streak_dir}
         return out
     except Exception as e:
         log.warning("sector 5d series: %s", e)
