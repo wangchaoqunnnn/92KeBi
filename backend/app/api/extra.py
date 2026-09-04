@@ -144,8 +144,8 @@ def stock_detail(code: str):
 
 
 @router.get("/stocks/{code}/block-trades")
-def stock_block_trades(code: str, limit: int = Query(40, ge=5, le=120)):
-    """历史大宗交易(按日聚合统计): 东财数据中心 RPT_BLOCKTRADE_STA"""
+def stock_block_trades(code: str, limit: int = Query(0, ge=0, le=120)):
+    """历史大宗交易(按日聚合): limit=0 → 近1年(滚动365日)全部; 否则最近 limit 条"""
     from ..real import blocktrade
     res = blocktrade.fetch_block_trades(code, limit)
     if DATA_SOURCE == "mock":

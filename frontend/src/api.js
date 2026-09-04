@@ -43,7 +43,7 @@ export const api = {
 
   search: (q) => req(`/api/search?q=${encodeURIComponent(q)}`),
   stock: (code) => req(`/api/stocks/${code}`),
-  stockBlockTrades: (code, limit = 40) => req(`/api/stocks/${code}/block-trades?limit=${limit}`),
+  stockBlockTrades: (code, limit = 0) => req(`/api/stocks/${code}/block-trades?limit=${limit}`),
 
   backtestMeta: () => req('/api/backtest/meta'),
   runBacktest: (payload) => req('/api/backtest/run', { method: 'POST', body: JSON.stringify(payload) }),

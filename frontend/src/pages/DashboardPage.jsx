@@ -376,7 +376,7 @@ function VolCell({ s }) {
 }
 
 /* 板块行：点击展开当日涨停股分层(龙头/补涨/跟风) + 量能列 */
-function SectorRow({ s, open, busy, err, detail, onToggle, goStock }) {
+function SectorRow({ s, rank, open, busy, err, detail, onToggle, goStock }) {
   const roleCls = (role) => {
     if (!role) return 'role-gray'
     if (role.includes('龙头')) return 'role-dragon'
@@ -387,6 +387,7 @@ function SectorRow({ s, open, busy, err, detail, onToggle, goStock }) {
   return (
     <>
       <tr className={`dash-sec-row ${open ? 'open' : ''}`} onClick={onToggle}>
+        <td className="num muted2" style={{ width: 44 }}>{rank != null ? rank : '—'}</td>
         <td>
           <span style={{ fontWeight: 600 }}>{s.sector}</span>
           {s.is_dragon_sector && <Tag cls="tag-main">主线</Tag>}
@@ -402,7 +403,7 @@ function SectorRow({ s, open, busy, err, detail, onToggle, goStock }) {
       </tr>
       {open && (
         <tr className="sec-detail-row">
-          <td colSpan={7}>
+          <td colSpan={8}>
             {busy ? (
               <div className="loading" style={{ padding: 14 }}><span className="spin" />加载涨停明细…</div>
             ) : err ? (
@@ -530,7 +531,10 @@ export default function DashboardPage({ route, params, nav, goStock }) {
   const volDiff = vol && vol.today_yi != null && vol.prev_yi != null ? Number(vol.today_yi) - Number(vol.prev_yi) : null
   const volCls = volDiff == null ? 'flat' : volDiff > 0 ? 'up' : volDiff < 0 ? 'down' : 'flat'
   const secAll = secRows.length ? secRows : [...secTop, ...secBottom]
-  const sortedSecs = sortRows(secAll, secSort.key, secSort.dir)
+  /* 板块强弱榜: 仅统计 涨幅前10 + 跌幅后10(按涨跌幅取两端); 组内可点表头切换排序 */
+  const secCount = secAll.length
+  const sortTop10 = sortRows(sortRows(secAll, 'avg_pct', 'desc').slice(0, 10), secSort.key, secSort.dir)
+  const sortBottom10 = sortRows(sortRows(secAll, 'avg_pct', 'asc').slice(0, 10), secSort.key, secSort.dir)
 
   return (
     <div className="page">
@@ -811,10 +815,10 @@ export default function DashboardPage({ route, params, nav, goStock }) {
       {/* 4) 板块强弱 */}
       <div className="grid-28">
       <Card
-        title="板块强弱榜"
+        title={`板块强弱榜 · 涨幅前10 / 跌幅后10`}
         extra={
           <span className="muted">
-            主线 = 总龙所在板块（金）；点板块行展开“今日涨停股分层（龙头/补涨/跟风）”；* = 量能档案积累中
+            全市场共 {secCount} 个板块，仅统计两端各10名；点板块行展开“今日涨停股分层（龙头/补涨/跟风）”；* = 量能档案积累中
           </span>
         }
       >
@@ -822,6 +826,7 @@ export default function DashboardPage({ route, params, nav, goStock }) {
           <table className="tbl dash-sec-tbl">
             <thead>
               <tr>
+                <th style={{ width: 44 }}>排名</th>
                 <SortTh label="板块" sortKey="sector" sort={secSort} />
                 <SortTh label="涨跌幅" sortKey="avg_pct" sort={secSort} />
                 <SortTh label="今涨停" sortKey="zt_today" sort={secSort} />
@@ -831,18 +836,33 @@ export default function DashboardPage({ route, params, nav, goStock }) {
                 <th />
               </tr>
             </thead>
-            <tbody>
-              {sortedSecs.length === 0 && <tr><td colSpan={7}><Empty text="暂无板块数据" /></td></tr>}
-              {sortedSecs.map((s) => (
-                <SectorRow key={s.sector} s={s} open={ztOpen === s.sector}
-                  busy={ztBusy} err={ztErr} detail={ztMap[s.sector]}
-                  onToggle={() => toggleZt(s.sector)} goStock={goStock} />
-              ))}
-            </tbody>
+            {secCount === 0 && (
+              <tbody><tr><td colSpan={8}><Empty text="暂无板块数据" /></td></tr></tbody>
+            )}
+            {secCount > 0 && (
+              <>
+                <tbody>
+                  <tr className="dash-sep"><td colSpan={8}>涨幅前 10（资金主攻方向）</td></tr>
+                  {sortTop10.map((s, idx) => (
+                    <SectorRow key={s.sector} s={s} rank={idx + 1} open={ztOpen === s.sector}
+                      busy={ztBusy} err={ztErr} detail={ztMap[s.sector]}
+                      onToggle={() => toggleZt(s.sector)} goStock={goStock} />
+                  ))}
+                </tbody>
+                <tbody>
+                  <tr className="dash-sep"><td colSpan={8}>跌幅后 10（回避方向）</td></tr>
+                  {sortBottom10.map((s, idx) => (
+                    <SectorRow key={s.sector} s={s} rank={idx + 1} open={ztOpen === s.sector}
+                      busy={ztBusy} err={ztErr} detail={ztMap[s.sector]}
+                      onToggle={() => toggleZt(s.sector)} goStock={goStock} />
+                  ))}
+                </tbody>
+              </>
+            )}
           </table>
         </div>
         <div className="muted small" style={{ marginTop: 8, color: '#5f7598' }}>
-          点击表头排序（当前：{secSort.key}，{secSort.dir === 'asc' ? '升序' : '降序'}）· 点击板块行展开今日涨停股分层；
+          分组按涨跌幅两端各取10名；组内可点表头切换排序（当前：{secSort.key}，{secSort.dir === 'asc' ? '升序' : '降序'}）· 点击板块行展开今日涨停股分层；
           分层口径：龙头 = 今日最高连板且成交额居前；同高/中位 = 跟风（忌讳追高）；首板 = 补涨/试错观察；
           板块高标(anchors)今日未封板表示总龙断板/歇整，注意“断板即撤”。
         </div>

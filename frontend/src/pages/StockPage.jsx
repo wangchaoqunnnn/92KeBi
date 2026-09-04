@@ -424,10 +424,10 @@ export default function StockPage({ route, params, nav, goStock }) {
         )}
       </Card>
 
-      {/* 1.6) 历史大宗交易统计 */}
+      {/* 1.6) 历史大宗交易统计(近1年) */}
       <Card
         title="历史大宗交易统计"
-        extra={<Tag cls="tag-gray">按日聚合 · 东财数据中心 · 亿元口径</Tag>}
+        extra={<Tag cls="tag-gray">近1年(滚动365日)全部 · 按日聚合 · 东财数据中心</Tag>}
       >
         {btErr ? (
           <div className="error-box" style={{ padding: 14 }}>{String(btErr?.message || btErr)}</div>
@@ -457,7 +457,7 @@ export default function StockPage({ route, params, nav, goStock }) {
                 <div className="kpi-sub">折价 {bt.stats?.discount_n ?? '—'} 个交易日</div>
               </Kpi>
             </div>
-            <div className="table-wrap" style={{ marginTop: 8 }}>
+            <div className="table-wrap" style={{ marginTop: 8, maxHeight: 360, overflow: 'auto' }}>
               <table className="tbl">
                 <thead>
                   <tr>
@@ -488,7 +488,7 @@ export default function StockPage({ route, params, nav, goStock }) {
               </table>
             </div>
             <div className="muted2 small" style={{ marginTop: 6 }}>
-              大宗交易在收盘后披露；负折/溢价表示相对当日收盘价的成交折让；数据按日聚合（当日多笔合并），来自东财数据中心。
+              统计口径：近1年（滚动365日）内该股全部大宗交易（共 {bt.rows.length} 个交易日记录，按日聚合）；大宗在收盘后披露；负折/溢价表示相对当日收盘价的成交折让。
             </div>
           </>
         )}
