@@ -46,3 +46,9 @@ def ops_delete(item_id: int = Query(...)):
 def ops_push_test():
     """微信推送连通性测试(需配置 WECHAT_WEBHOOK 环境变量)"""
     return {"ok": True, **ops.wechat_push_test()}
+
+
+@router.post("/demo-sell")
+def ops_demo_sell():
+    """卖出池新增一条模拟数据(每次调用新增1条, 并推送微信群)"""
+    return ops.add_demo_sell()

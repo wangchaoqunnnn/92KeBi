@@ -86,26 +86,72 @@ def _today():
 
 
 # ---------------------------------------------------------------- 演示数据(卖出池样例)
-def _ensure_demo_sell():
-    """向卖出池插入1条模拟演示数据(仅一次), 便于查看卖出池结构/统计"""
+def _insert_demo_sell(code, name, sector, entry_price, entry_day, entry_tm,
+                      exit_day, exit_tm, exit_price, buy_reason, exit_reason, tag):
+    """插入一条卖出池模拟数据并推送微信群(可重复调用, 每次新增1条)"""
+    now = _now()
+    pnl = round((float(exit_price) / float(entry_price) - 1) * 100, 2)
+    note = f"[演示样例·{tag}，仅供查看卖出池布局与推送效果，可忽略不计入实盘]"
     try:
-        if db.meta_get("ops_demo_sell_v1"):
-            return
-        now = _now()
-        pnl = round((7.12 / 6.98 - 1) * 100, 2)
         with db.tx() as con:
-            con.execute(
+            cur = con.execute(
                 "INSERT INTO ops_items(code,name,sector,pool,status,strategy,signal,reason,"
                 "entry_date,entry_time,entry_price,exit_date,exit_time,exit_price,exit_reason,"
                 "pnl_pct,hold_days,created_at,updated_at,last_date,note) "
                 "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                ("000592", "平潭发展", "农林牧渔", "sell", "closed", "buyang", "低位首板确认",
-                 "低位首板确认：低位首板涨停，题材与主线一致 → 补涨买点（演示样例）",
-                 "2026-09-03", "09:41:07", 6.98, "2026-09-04", "13:22:41", 7.12,
-                 "加速一致/一致转分歧，止盈离场（演示样例）",
-                 pnl, 1, now, now, "2026-09-04", "[演示样例·仅供查看卖出池布局，可忽略不计入实盘]"))
-        db.meta_set("ops_demo_sell_v1", "1")
-        log.info("demo sell row inserted")
+                (code, name, sector, "sell", "closed", "demo", tag, buy_reason,
+                 entry_day, entry_tm, float(entry_price), exit_day, exit_tm,
+                 float(exit_price), exit_reason, pnl, 1, now, now, exit_day, note))
+            row_id = cur.lastrowid
+        row = db.query_one("SELECT * FROM ops_items WHERE id=?", (row_id,))
+        log.info("demo sell row inserted id=%s %s", row_id, name)
+        # 卖出池数据变化 → 立即推送
+        res = _notify_sell_change(row, tag=f"演示结算（{tag}）",
+                                  extra=f"说明：模拟数据，仅供查看布局/推送")
+        return {"ok": True, "id": row_id, "code": code, "name": name,
+                "pnl_pct": pnl, "push": res}
+    except Exception as e:
+        log.warning("insert demo sell: %s", e)
+        return {"ok": False, "error": str(e)[:150]}
+
+
+def add_demo_sell():
+    """手动新增一条卖出池模拟数据(循环使用多个示例标的, 避免与现有记录重复)"""
+    setup()
+    existing = {r["code"] for r in db.query("SELECT code FROM ops_items WHERE pool='sell'")}
+    # (code,name,sector, entry_price, entry_day, entry_tm, exit_day, exit_tm, exit_price, 买入理由, 卖出理由, 标签)
+    demos = [
+        ("601989", "中国重工", "船舶制造", 4.98, "2026-09-02", "09:37:12",
+         "2026-09-04", "14:02:55", 5.19,
+         "低位首板确认：船舶板块走强，补涨逻辑（演示样例）",
+         "冲高滞涨/量能衰减，止盈离场（演示样例）", "船舶补涨"),
+        ("600150", "中国船舶", "船舶制造", 32.45, "2026-09-03", "10:05:31",
+         "2026-09-04", "11:23:08", 33.10,
+         "板块龙头企稳，跟随买点（演示样例）",
+         "板块分歧/龙头减速，落袋为安（演示样例）", "龙头跟买"),
+        ("600685", "中船防务", "船舶制造", 22.18, "2026-09-03", "13:44:20",
+         "2026-09-04", "10:41:47", 21.35,
+         "回踩低吸买点（演示样例）",
+         "跌破止损线-5%，止损离场（演示样例）", "回踩低吸"),
+    ]
+    for d in demos:
+        if d[0] not in existing:
+            return _insert_demo_sell(*d)
+    return {"ok": False, "error": "示例标的均已存在(可先删除部分卖出池记录再试)"}
+
+
+def _ensure_demo_sell():
+    """首次启动向卖出池插入1条演示数据(自动+推送), 便于查看卖出池结构/统计"""
+    try:
+        if db.meta_get("ops_demo_sell_v1"):
+            return
+        res = _insert_demo_sell(
+            "000592", "平潭发展", "农林牧渔", 6.98, "2026-09-03", "09:41:07",
+            "2026-09-04", "13:22:41", 7.12,
+            "低位首板确认：低位首板涨停，题材与主线一致 → 补涨买点（演示样例）",
+            "加速一致/一致转分歧，止盈离场（演示样例）", "系统初始化")
+        if res.get("ok"):
+            db.meta_set("ops_demo_sell_v1", "1")
     except Exception as e:
         log.warning("demo sell: %s", e)
 
@@ -166,6 +212,63 @@ def _wechat_push(text):
 
 def wechat_push_test():
     return _wechat_push("【92K 打板·测试】微信推送已接通 ✅\n时间 " + _now())
+
+
+def _fmt_num(v, nd=2):
+    try:
+        if v is None:
+            return "—"
+        return f"{round(float(v), nd):.{nd}f}"
+    except Exception:
+        return "—"
+
+
+def _fmt_pct(v):
+    try:
+        if v is None:
+            return "—"
+        return f"{float(v):+.2f}%"
+    except Exception:
+        return "—"
+
+
+def _notify(msg):
+    """向配置的微信群推送(失败不抛异常, 记日志)"""
+    try:
+        res = _wechat_push(msg)
+        if res.get("sent", 0) > 0:
+            log.info("wechat push ok: %s", msg.splitlines()[0] if msg else "")
+        else:
+            log.info("wechat push skipped(%s)", res.get("reason"))
+        return res
+    except Exception as e:  # noqa
+        log.warning("wechat notify: %s", e)
+        return {"sent": 0, "reason": str(e)[:120]}
+
+
+def _notify_buy_change(code, name, sector, price, signal, reason, when, tag="新开仓"):
+    return _notify(
+        f"【92K 打板·买入池·持仓】{tag}\n"
+        f"{name}（{code}）{sector or ''}\n"
+        f"买入价：{_fmt_num(price)} @ {when}\n"
+        f"信号：{signal or '—'}\n理由：{reason or '—'}")
+
+
+def _notify_sell_change(r, tag="自动结算", extra=None):
+    """r: ops_items sell 行(dict); tag: 自动结算/手动结算/演示结算/删除等"""
+    lines = [
+        f"{r.get('name') or r.get('code')}（{r.get('code')}）{r.get('sector') or ''}",
+        f"买入 {r.get('entry_date') or '—'} {r.get('entry_time') or ''} @ {_fmt_num(r.get('entry_price'))}"
+        f" → 卖出 {r.get('exit_date') or '—'} {r.get('exit_time') or ''} @ {_fmt_num(r.get('exit_price'))}"
+        f"  {_fmt_pct(r.get('pnl_pct'))}",
+        f"持有：{r.get('hold_days') if r.get('hold_days') is not None else '—'}天",
+    ]
+    er = r.get("exit_reason")
+    if er:
+        lines.append(f"卖出理由：{er}")
+    if extra:
+        lines.append(extra)
+    return _notify(f"【92K 打板·卖出池·结算】{tag}\n" + "\n".join(lines))
 
 
 def _wechat_status():
@@ -263,9 +366,8 @@ def sweep(view=None, ctx=None):
                 opened += 1
                 _prompt(code, name, "buy", s.get("strategy"), s.get("signal"), price, reason)
                 try:
-                    _wechat_push(
-                        f"【92K 打板·买点提示】\n{name}（{code}）{s.get('sector') or ''}\n"
-                        f"信号：{s.get('signal')}\n价格：{price}\n时间：{date} {_now()[11:]}\n理由：{reason}")
+                    _notify_buy_change(code, name, s.get("sector"), price,
+                                       s.get("signal"), reason, f"{date} {_now()[11:]}")
                 except Exception as e:  # noqa
                     log.warning("wechat buy push: %s", e)
             except Exception as e:  # noqa
@@ -315,6 +417,13 @@ def sweep(view=None, ctx=None):
                 closed += 1
                 _prompt(code, r.get("name", code), "sell", r.get("strategy"),
                         "卖出提示", price, exit_reason)
+                # 持仓结算 → 卖出池数据变化, 立即推送
+                row = dict(r, exit_date=date, exit_time=now, exit_price=round(price, 2),
+                           exit_reason=exit_reason, pnl_pct=pnl, hold_days=hold)
+                try:
+                    _notify_sell_change(row, tag="自动结算（卖点）")
+                except Exception as e:  # noqa
+                    log.warning("wechat sell push: %s", e)
             except Exception as e:  # noqa
                 log.warning("sell close %s: %s", code, e)
 
@@ -489,8 +598,21 @@ def ignore_item(pool, code):
     setup()
     where = "pool=? AND code=? AND status='open'" if pool == "buy" else "pool=? AND code=?"
     if pool == "buy":
+        rows = db.query("SELECT * FROM ops_items WHERE pool='buy' AND code=? AND status='open'",
+                        (code,))
         n = db.execute("UPDATE ops_items SET status='ignored', updated_at=? "
                        "WHERE pool='buy' AND code=? AND status='open'", (_now(), code)).rowcount
+        # 买入池数据变化 → 立即推送
+        if n and rows:
+            row = dict(rows[0], status="ignored")
+            try:
+                _notify_buy_change(code, row.get("name") or code, row.get("sector"),
+                                   row.get("entry_price"), row.get("signal"),
+                                   "人工移除：不再跟踪该持仓（已忽略）",
+                                   f"{row.get('entry_date')} {row.get('entry_time') or ''}",
+                                   tag="移除（忽略）")
+            except Exception as e:  # noqa
+                log.warning("wechat ignore push: %s", e)
     elif pool == "watch":
         n = db.execute("UPDATE ops_items SET status='archived', updated_at=? "
                        "WHERE pool='watch' AND code=? AND status='open'", (_now(), code)).rowcount
@@ -519,6 +641,13 @@ def manual_sell(code):
         "exit_price=?, exit_reason='手动了结', pnl_pct=?, updated_at=? WHERE id=?",
         (r["entry_date"], now, round(price, 2), pnl, now, r["id"]))
     _prompt(code, r.get("name", code), "sell", r.get("strategy"), "手动卖出", price, "手动了结")
+    # 持仓了结 → 卖出池数据变化, 立即推送
+    row = dict(r, exit_date=r["entry_date"], exit_time=now, exit_price=round(price, 2),
+               exit_reason="手动了结", pnl_pct=pnl, updated_at=now)
+    try:
+        _notify_sell_change(row, tag="手动结算")
+    except Exception as e:  # noqa
+        log.warning("wechat manual sell push: %s", e)
     return {"ok": True, "code": code, "price": round(price, 2), "pnl_pct": pnl}
 
 
@@ -542,13 +671,17 @@ def manual_watch(code):
 
 
 def delete_sell(item_id):
-    """管理删除卖出池记录"""
+    """管理删除卖出池记录(删除也属数据变化, 推送微信群)"""
     setup()
-    row = db.query_one("SELECT id, pool, name FROM ops_items WHERE id=?", (item_id,))
+    row = db.query_one("SELECT * FROM ops_items WHERE id=?", (item_id,))
     if not row:
         return {"ok": False, "error": "记录不存在"}
     if row["pool"] != "sell":
         return {"ok": False, "error": "仅卖出池记录可删除(其它池请用移除/忽略)"}
     db.execute("DELETE FROM ops_items WHERE id=?", (item_id,))
     log.info("ops delete sell id=%s name=%s", item_id, row["name"])
+    try:
+        _notify_sell_change(row, tag="删除记录", extra=f"管理删除：该条卖出记录已从卖出池移除（id={item_id}）")
+    except Exception as e:  # noqa
+        log.warning("wechat delete push: %s", e)
     return {"ok": True, "deleted": 1, "name": row["name"]}
