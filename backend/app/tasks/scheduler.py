@@ -58,7 +58,12 @@ class Scheduler:
                     _state["poll_count"] += 1
                     _state["last_poll"] = time.strftime("%H:%M:%S")
                     _state["poll_error"] = None
-                    market_cache.invalidate()   # 下一次取视图即用最新快照
+                    market_cache.invalidate()
+                    # 取数后立即预热分析视图(后台), 让页面请求基本命中缓存 → 低感知延迟
+                    try:
+                        await asyncio.to_thread(market_cache.get_view, 0.0)
+                    except Exception as e:  # noqa
+                        log.warning("warm view error: %s", e)
                 except Exception as e:  # noqa
                     log.warning("real poll error: %s", e)
                     _state["poll_error"] = str(e)
@@ -69,14 +74,16 @@ class Scheduler:
                 await asyncio.sleep(2)
 
     async def _analysis_loop(self):
-        """缓存刷新：保证各页面数据新鲜(≤缓存窗口)。"""
+        """缓存刷新：保证各页面数据新鲜(≤缓存窗口)。
+        real 模式由 poll 线程拉完数据后立即预热视图, 这里只兜底降频。"""
+        cadence = 8 if DATA_SOURCE == "mock" else 30
         while _state["running"]:
             try:
                 market_cache.get_view(max_age=12.0)
                 _state["last_analysis"] = time.strftime("%H:%M:%S")
             except Exception as e:  # noqa
                 log.warning("analysis error: %s", e)
-            await asyncio.sleep(8)
+            await asyncio.sleep(cadence)
 
     async def _daily_loop(self):
         """盘后任务/每日复盘。real: 收盘后回填当日真实日K与存档。"""

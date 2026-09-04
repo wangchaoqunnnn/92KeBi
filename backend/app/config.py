@@ -12,7 +12,7 @@ MOCK_SEED = int(os.environ.get("MOCK_SEED", "920202406"))
 MOCK_TRADING_DAYS = int(os.environ.get("MOCK_TRADING_DAYS", "522"))
 
 # ---- real 参数(新浪+腾讯双源) ----
-REAL_POLL_SECONDS = float(os.environ.get("REAL_POLL_SECONDS", "8"))      # 交易时段轮询间隔
+REAL_POLL_SECONDS = float(os.environ.get("REAL_POLL_SECONDS", "6"))      # 交易时段轮询间隔
 REAL_FULL_EVERY = int(os.environ.get("REAL_FULL_EVERY", "18"))           # 每N次tick做一次全量同步(成分/新增股)
 REAL_PREF = os.environ.get("REAL_PREF", "")                              # 强制快速源: tencent | sina_hq (留空自动择优)
 REAL_QUOTE_URL = os.environ.get("REAL_QUOTE_URL",

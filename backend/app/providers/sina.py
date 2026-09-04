@@ -165,41 +165,56 @@ def fetch_industry_map(industries, threads=8):
 
 
 # ---------------------------------------------------------------- 批量实时行情(hq)
+HQ_CHUNK = 900  # 每请求代码数(URL 容量范围内取大, 减少请求数降低延迟)
+
+
+def _hq_one(chunk, timeout, tries):
+    url = "https://hq.sinajs.cn/list=" + ",".join(chunk)
+    raw = _http(url, timeout, tries)
+    txt = raw.decode("gbk", "ignore")
+    out = {}
+    for line in txt.splitlines():
+        line = line.strip()
+        if not line.startswith("var hq_str_"):
+            continue
+        head, _, body = line.partition("=")
+        sym = head.replace("var hq_str_", "").strip('" ')
+        code = sym[2:]
+        f = body.strip().strip('"').split(",")
+        if len(f) < 32 or not f[0]:
+            continue
+
+        def fl(x):
+            try:
+                return float(x)
+            except (TypeError, ValueError):
+                return None
+        out[code] = {
+            "code": code, "symbol": sym, "name": f[0],
+            "open": fl(f[1]), "pre_close": fl(f[2]), "price": fl(f[3]),
+            "high": fl(f[4]), "low": fl(f[5]),
+            "volume": fl(f[8]), "amount": fl(f[9]),
+            "date": f[30] if len(f) > 30 else "", "time": f[31] if len(f) > 31 else "",
+        }
+    return out
+
+
 def fetch_hq_quotes(symbols, timeout=10, tries=2):
-    """新浪 hq 小批量实时行情。symbols: ['sh600519', ...] 或含 sz/bj 前缀。
-    返回 dict code->dict(name,open,pre_close,price,high,low,volume,amount,date,time)"""
+    """新浪 hq 批量实时行情(分块并发)。symbols: ['sh600519', ...] 或含 sz/bj 前缀。
+    返回 dict code->quote"""
     if not symbols:
         return {}
+    chunks = [symbols[i:i + HQ_CHUNK] for i in range(0, len(symbols), HQ_CHUNK)]
     out = {}
-    # 分块 350/请求
-    for i in range(0, len(symbols), 350):
-        chunk = symbols[i:i + 350]
-        url = "https://hq.sinajs.cn/list=" + ",".join(chunk)
-        raw = _http(url, timeout, tries)
-        txt = raw.decode("gbk", "ignore")
-        for line in txt.splitlines():
-            line = line.strip()
-            if not line.startswith("var hq_str_"):
-                continue
-            head, _, body = line.partition("=")
-            sym = head.replace("var hq_str_", "").strip('" ')
-            code = sym[2:]
-            f = body.strip().strip('"').split(",")
-            if len(f) < 32 or not f[0]:
-                continue
-
-            def fl(x):
-                try:
-                    return float(x)
-                except (TypeError, ValueError):
-                    return None
-            out[code] = {
-                "code": code, "symbol": sym, "name": f[0],
-                "open": fl(f[1]), "pre_close": fl(f[2]), "price": fl(f[3]),
-                "high": fl(f[4]), "low": fl(f[5]),
-                "volume": fl(f[8]), "amount": fl(f[9]),
-                "date": f[30] if len(f) > 30 else "", "time": f[31] if len(f) > 31 else "",
-            }
+    with ThreadPoolExecutor(max(4, min(20, len(chunks) or 1))) as ex:
+        futs = [ex.submit(_hq_one, c, timeout, tries) for c in chunks]
+        for fu in as_completed(futs):
+            try:
+                out.update(fu.result())
+            except Exception as e:
+                log.warning("hq chunk fail: %s", e)
+    if not out and chunks:
+        raise ConnectionError("sina hq returned no quotes")
     return out
 
 

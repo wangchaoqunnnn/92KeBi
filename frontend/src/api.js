@@ -23,6 +23,7 @@ async function req(path, opts = {}) {
 export const api = {
   meta: () => req('/api/meta'),
   live: () => req('/api/market/live'),
+  sectorZt: (sector) => req(`/api/market/sector-zt?sector=${encodeURIComponent(sector)}`),
 
   overview: () => req('/api/dashboard/overview'),
   sectors: () => req('/api/dashboard/sectors'),

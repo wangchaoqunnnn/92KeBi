@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 log = logging.getLogger("kb.tencent")
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0"}
-CHUNK = 380
+CHUNK = 900
 
 
 def _http(url, timeout=10, tries=2):
@@ -81,7 +81,7 @@ def fetch_hq_quotes(symbols, timeout=8):
         return res
 
     chunks = [symbols[i:i + CHUNK] for i in range(0, len(symbols), CHUNK)]
-    with ThreadPoolExecutor(max(4, min(10, len(chunks) or 1))) as ex:
+    with ThreadPoolExecutor(max(4, min(20, len(chunks) or 1))) as ex:
         futs = [ex.submit(one, c) for c in chunks]
         for fu in as_completed(futs):
             try:

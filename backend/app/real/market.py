@@ -16,6 +16,7 @@ from datetime import date
 from .. import db
 from ..config import DATA_DIR, REAL_FULL_EVERY
 from ..providers import router, sina, tencent
+from . import intraday
 log = logging.getLogger("kb.real")
 
 _lock = threading.Lock()
@@ -241,6 +242,7 @@ def refresh_quotes():
             quotes, src, ms = _acq_full()
             router._record("sina_market", ms, ok=True)
             _store_refresh(quotes, src, ms, full=True)
+            _maybe_archive()
             return True
         except Exception as e:
             log.error("full market fetch fail: %s", e)
@@ -253,9 +255,41 @@ def refresh_quotes():
     quotes, src, ms, err = _acq_fast()
     if quotes:
         _store_refresh(quotes, src, ms, full=False)
+        _maybe_archive()
         return True
     _state["last_error"] = f"快速双源失败: {err}"
     return False
+
+
+def _maybe_archive():
+    """盘中将“全市场+行业累计成交额”写入分时档案(供次日‘同时段’放量/缩量对比)"""
+    try:
+        st = _state
+        qd = st.get("quote_date") or ""
+        quotes = st.get("quotes") or {}
+        if not qd or not quotes:
+            return
+        c2i = (st.get("industry_data") or {}).get("code2industry", {})
+        ind_amt = {}
+        mkt_amt = 0.0
+        for c, q in quotes.items():
+            a = q.get("amount") or 0
+            mkt_amt += a
+            ind = c2i.get(c)
+            if ind:
+                ind_amt[ind] = ind_amt.get(ind, 0) + a
+        mkt_yi = mkt_amt / 1e8
+        intraday.archive_row(qd, mkt_yi, {k: v / 1e8 for k, v in ind_amt.items()})
+        # 上证指数量能: 今日 vs 昨日同时段(有内置45s缓存, 放锁外执行)
+        vol = intraday.index_volume_compare()
+        m = _state.get("mkt_stats")
+        if m is not None and vol is not None:
+            m = dict(m)
+            m["volume"] = vol
+            with _lock:
+                _state["mkt_stats"] = m
+    except Exception as e:
+        log.warning("archive row: %s", e)
 
 
 def _store_refresh(quotes, src, ms, full):
@@ -338,6 +372,7 @@ def _store_refresh(quotes, src, ms, full):
             "max_streak": max(_state["today_ladder"].values()) if _state["today_ladder"] else 0,
             "ladder": ladder_counts,
             "src": src,
+            "volume": None,  # 由 _maybe_archive 在锁外补充(上证量能对比, 45s缓存)
         }
 
 
@@ -369,7 +404,124 @@ def industry_stats_full():
                      "up_ratio": round(d["up"] / n * 100), "zt_5d": None,
                      "is_dragon_sector": False})
     rows.sort(key=lambda r: -r["avg_pct"])
+    # 量能: 今日板块累计 vs 昨日同时段(分时档案; 首个运行日无档案 → prev=None)
+    try:
+        amt_map = {r["sector"]: r["amount"] for r in rows}
+        cmp, _pd = intraday.sector_compare_today(_state.get("quote_date") or "", amt_map)
+        for r in rows:
+            v = cmp.get(r["sector"]) or {}
+            r["vol_prev_yi"] = v.get("prev_yi")
+            r["vol_ratio"] = v.get("ratio")
+    except Exception as e:
+        log.warning("sector vol compare: %s", e)
     return rows
+
+
+def _hot_industry():
+    """当前热度最高的行业(当日涨停/连板最高者所在)作为‘主线近似’"""
+    st = snapshot()
+    ladder = st.get("today_ladder") or {}
+    best = None
+    for c, s in ladder.items():
+        if best is None or s > best[1]:
+            best = (c, s)
+    if not best:
+        return None
+    return industry_of(best[0])
+
+
+def _sector_anchor(industry):
+    """板块近日高标(样本日K): 若板块总龙/高标今日未封板(断板/歇整), 作为下拉里的情绪锚提示"""
+    try:
+        dates = [r["date"] for r in db.query(
+            "SELECT DISTINCT date FROM bars ORDER BY date DESC LIMIT 10")]
+        if len(dates) < 2:
+            return []
+        rows = db.query("SELECT date,code,MAX(streak) s FROM bars "
+                        "WHERE date BETWEEN ? AND ? AND streak>=2 GROUP BY code",
+                        (dates[-1], dates[0]))
+        c2i = get_industry_cache().get("code2industry", {})
+        codes = []
+        for r in rows:
+            if c2i.get(r["code"]) == industry:
+                last = db.query_one("SELECT date,streak FROM bars WHERE code=? AND streak>=2 "
+                                    "ORDER BY date DESC LIMIT 1", (r["code"],))
+                codes.append({"code": r["code"], "max_streak": r["s"],
+                              "last_date": last["date"] if last else None,
+                              "last_streak": last["streak"] if last else 0})
+        quotes = _state.get("quotes") or {}
+        codes.sort(key=lambda x: -x["max_streak"])
+        out = []
+        for c in codes[:2]:
+            q = quotes.get(c["code"]) or {}
+            zt_now = bool(q.get("zt"))
+            out.append({**c,
+                        "name": q.get("name") or c["code"],
+                        "zt_today": zt_now,
+                        "note": (f"近10日最高 {c['max_streak']} 连板(最近 {c.get('last_date')})；"
+                                 f"今日{'涨停续板' if zt_now else '未封板(断板/歇整)——仍是板块情绪锚, 其倒下=板块退潮'}")})
+        return out
+    except Exception as e:
+        log.warning("sector anchor: %s", e)
+        return []
+
+
+def sector_zt_detail(industry):
+    """某行业当日涨停股明细 + 龙头/补涨/跟风 分层判断(92框架规则, 供板块榜下拉)"""
+    st = snapshot()
+    quotes = st.get("quotes") or {}
+    ladder = st.get("today_ladder") or {}
+    c2i = get_industry_cache().get("code2industry", {})
+    zt = []
+    for c, q in quotes.items():
+        if q.get("zt") and c2i.get(c) == industry:
+            zt.append(c)
+
+    def _key(c):
+        q = quotes.get(c) or {}
+        return (-(ladder.get(c) or 0), -((q.get("amount") or 0)))
+
+    zt.sort(key=_key)
+    hot = _hot_industry()
+    is_dragon = bool(hot and hot == industry)
+    if not zt:
+        return {"sector": industry, "is_dragon_sector": is_dragon, "items": [],
+                "leader": None, "note": "该板块今日无涨停"}
+
+    max_s = max((ladder.get(c) or 0) for c in zt)
+    items = []
+    leaders = [c for c in zt if (ladder.get(c) or 0) == max_s]
+    primary = leaders[0]
+    for idx, c in enumerate(zt):
+        q = quotes[c]
+        s = ladder.get(c) or 0
+        if s >= 2 and c in leaders:
+            if c == primary:
+                role, note = ("板块龙头", f"板块内最高 {s} 连板、成交额居前——辨识度核心；"
+                              f"适用龙头战法(分歧买入/弱转强)，断板即撤")
+            else:
+                role, note = ("同高卡位", f"与龙头同 {s} 板高度, 需次日淘汰确认; 高位卡位追高风险大")
+        elif s >= 2:
+            role, note = ("中位跟风", f"{s} 板, 高度低于板块龙头——中位跟风(忌讳追高/亏钱效应最先出现在中位)")
+        else:
+            if c == zt[0]:
+                role, note = ("首板领涨", "板块内最强首板(按成交额)，题材萌芽观察")
+            else:
+                role, note = ("首板跟风", "同板块首板跟风，未确立地位前只看不做")
+        if is_dragon and c == primary:
+            note += "；【主线板块·总龙候选】"
+        items.append({
+            "code": c, "name": q["name"], "price": round(q.get("price") or 0, 2),
+            "pct": q.get("pct"), "amount_yi": round((q.get("amount") or 0) / 1e8, 2),
+            "streak": s, "limit_time": q.get("ticktime"),
+            "role": role, "is_leader": c == primary, "note": note,
+            "is_dragon_stock": bool(is_dragon and c == primary),
+        })
+    return {"sector": industry, "is_dragon_sector": is_dragon, "items": items,
+            "anchors": _sector_anchor(industry),
+            "leader": {"code": primary, "name": quotes[primary]["name"], "streak": max_s},
+            "note": "分层口径：龙头=今日板块内最高连板且成交额居前；同高度/中位=跟风(谨慎)；首板=补涨/试错观察。"
+                    "若存在上方‘板块高标(anchors)’且今日未封板，表示总龙断板/歇整，需按‘断板即撤’管理。"}
 
 
 def snapshot():

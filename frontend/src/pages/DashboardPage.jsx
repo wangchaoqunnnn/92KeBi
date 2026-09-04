@@ -26,7 +26,7 @@ function LiveTicker({ goStock }) {
 
   useEffect(() => {
     load()
-    const t = setInterval(load, 9000)
+    const t = setInterval(load, 6000)
     return () => clearInterval(t)
   }, [load])
 
@@ -211,6 +211,170 @@ function profitOption(hist) {
   }
 }
 
+/* ================================================================
+ * 情绪周期时间轴: 把连续同阶段交易日合并为“阶段段”, 横向渐变条 + 起止标注
+ */
+function mergePhaseBlocks(hist) {
+  const out = []
+  for (const r of hist) {
+    const last = out[out.length - 1]
+    if (last && last.phase === r.phase) {
+      last.to = r.date
+      last.n += 1
+      last.zt += r.zt || 0
+      last.dt += r.dt || 0
+    } else {
+      out.push({ phase: r.phase, from: r.date, to: r.date, n: 1, zt: r.zt || 0, dt: r.dt || 0 })
+    }
+  }
+  const total = out.reduce((s, b) => s + b.n, 0) || 1
+  out.forEach((b) => { b.w = Math.round((b.n / total) * 1000) / 10 })
+  return out
+}
+
+function PhaseTimeline({ hist }) {
+  const blocks = useMemo(() => mergePhaseBlocks(hist || []), [hist])
+  if (!blocks.length) return null
+  const today = hist[hist.length - 1] && hist[hist.length - 1].date
+  return (
+    <div className="dash-tl2">
+      <div className="dash-tl2-track">
+        {blocks.map((b, i) => {
+          const m = PHASE_META[b.phase] || { label: b.phase, color: BLUE, short: b.phase }
+          const last = blocks.length - 1 === i
+          return (
+            <div
+              key={i}
+              className={`dash-tl2-seg ${last ? 'now' : ''}`}
+              style={{ flexGrow: b.w, background: `linear-gradient(90deg, ${m.color}cc, ${m.color}66)` }}
+              title={`${b.phase === 'main_ascend' ? '主升' : b.phase === 'main_decline' ? '主跌' : b.phase === 'probe' ? '试错' : '高位震荡'} · ${b.from} ~ ${b.to} (${b.n}日, 平均涨停${(b.zt / b.n).toFixed(1)}/跌停${(b.dt / b.n).toFixed(1)})`}
+            >
+              <span className="dash-tl2-label">{m.short || m.label}</span>
+            </div>
+          )
+        })}
+      </div>
+      <div className="dash-tl2-line">
+        {blocks.map((b, i) => (
+          <span key={i} className="dash-tl2-pt">
+            {blocks.length > 6 ? (i === 0 || i === blocks.length - 1 ? b.from : '') : b.from}
+          </span>
+        ))}
+        <span className="dash-tl2-now">← 今日 {today}</span>
+      </div>
+      <div className="dash-tl2-seq">
+        {blocks.map((b, i) => {
+          const m = PHASE_META[b.phase] || { label: b.phase }
+          return (
+            <span key={i} className="dash-tl2-seqitem">
+              <i style={{ background: m.color }} />
+              <b>{m.label}</b> {b.from.replace(/\d{4}-/, '')} ~ {b.to.replace(/\d{4}-/, '')}（{b.n}日）
+            </span>
+          )
+        })}
+      </div>
+      <div className="dash-tl2-legend">
+        {PHASE_KEYS.map((k) => (
+          <span key={k}><i style={{ background: PHASE_META[k].color }} />{PHASE_META[k].label}</span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/* 板块涨停股的分层标签配色 */
+function ztRoleTone(role) {
+  if (role === '板块龙头') return 'buy'
+  if (role && role.includes('卡位')) return 'watch'
+  if (role && role.includes('跟风')) return 'watch'
+  if (role === '首板领涨') return 'buy'
+  return 'gray'
+}
+
+function VolCell({ v }) {
+  const r = Number(v)
+  if (v === null || v === undefined || Number.isNaN(r)) {
+    return <span className="muted2" title="分时档案自今日开始积累，次日(明日)起可对比昨日同时段">—*</span>
+  }
+  const cls = r > 0.5 ? 'up' : r < -0.5 ? 'down' : 'flat'
+  const txt = r > 0.5 ? '放量' : r < -0.5 ? '缩量' : '持平'
+  return (
+    <span className={`num ${cls}`} style={{ fontWeight: 600 }}>
+      {r > 0 ? '+' : ''}{fmt(r, 1)}%<i className="muted2 small" style={{ fontStyle: 'normal', marginLeft: 4 }}>{txt}</i>
+    </span>
+  )
+}
+
+/* 板块行：点击展开当日涨停股分层(龙头/补涨/跟风) + 量能列 */
+function SectorRow({ s, open, busy, err, detail, onToggle, goStock }) {
+  const roleCls = (role) => {
+    if (!role) return 'role-gray'
+    if (role.includes('龙头')) return 'role-dragon'
+    if (role.includes('卡位') || role.includes('跟风')) return 'role-follow'
+    if (role.includes('首板')) return 'role-first'
+    return 'role-gray'
+  }
+  return (
+    <>
+      <tr className={`dash-sec-row ${open ? 'open' : ''}`} onClick={onToggle}>
+        <td>
+          <span style={{ fontWeight: 600 }}>{s.sector}</span>
+          {s.is_dragon_sector && <Tag cls="tag-main">主线</Tag>}
+        </td>
+        <td><PctText value={s.avg_pct} /></td>
+        <td className="num" style={{ color: (s.zt_today || 0) > 0 ? UP : undefined, fontWeight: (s.zt_today || 0) > 0 ? 700 : 400 }}>
+          {s.zt_today ?? '—'}
+        </td>
+        <td className="num">{s.zt_5d ?? '—'}</td>
+        <td className="num">{fmtAmountYi(s.amount)}</td>
+        <td><VolCell v={s.vol_ratio} /></td>
+        <td><span className="caret" style={{ transform: open ? 'rotate(180deg)' : 'none' }}>▾</span></td>
+      </tr>
+      {open && (
+        <tr className="sec-detail-row">
+          <td colSpan={7}>
+            {busy ? (
+              <div className="loading" style={{ padding: 14 }}><span className="spin" />加载涨停明细…</div>
+            ) : err ? (
+              <div className="error-box" style={{ padding: 14 }}>{err}</div>
+            ) : !detail ? null : (
+              <div className="sec-detail">
+                {detail.anchors && detail.anchors.length > 0 && detail.anchors.map((a, i) => (
+                  <div className="sec-anchor" key={i}>
+                    <span>🏁 板块高标</span>
+                    <b><span className="link" onClick={() => goStock(a.code)}>{a.name}</span> {a.code}</b>
+                    <span>{a.max_streak}板 · 最近 {a.last_date}</span>
+                    {a.zt_today ? <span className="up">今日涨停续板</span> : <span className="muted">今日未封板（断板/歇整，倒下=板块退潮）</span>}
+                  </div>
+                ))}
+                {!detail.items || detail.items.length === 0 ? (
+                  <Empty text={`${s.sector} 今日无涨停`} />
+                ) : (
+                  <>
+                    <div className="sec-zt-head">今日涨停 {detail.items.length} 只 · 按高度排序
+                      {detail.leader ? <> · 今日最高板：<b className="up">{detail.leader.name}（{detail.leader.streak}板）</b></> : null}
+                    </div>
+                    {detail.items.map((it) => (
+                      <div className="zt-item" key={it.code}>
+                        <span className={`role-chip ${roleCls(it.role)}`}>{it.role}</span>
+                        <span className="nm"><span className="link" onClick={() => goStock(it.code)}>{it.name}</span> {it.code}</span>
+                        <span className="num">{it.streak > 0 ? `${it.streak}板` : '—'}</span>
+                        <span className="num">{fmtAmountYi(it.amount_yi)}</span>
+                        <PctText value={it.pct} />
+                        <span className="note" title={it.note}>{it.note}</span>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+            )}
+          </td>
+        </tr>
+      )}
+    </>
+  )
+}
+
 /* ================================================================ */
 export default function DashboardPage({ route, params, nav, goStock }) {
   const [ov, setOv] = useState(null)
@@ -224,9 +388,33 @@ export default function DashboardPage({ route, params, nav, goStock }) {
 
   useEffect(() => {
     loadOv()
-    const t = setInterval(loadOv, 20000)
+    const t = setInterval(loadOv, 10000)
     return () => clearInterval(t)
   }, [loadOv])
+
+  /* 全板块强弱榜(可展开涨停股明细) */
+  const [secRows, setSecRows] = useState([])
+  const [ztOpen, setZtOpen] = useState(null)
+  const [ztMap, setZtMap] = useState({})
+  const [ztBusy, setZtBusy] = useState(false)
+  const [ztErr, setZtErr] = useState(null)
+  useEffect(() => {
+    let on = true
+    api.sectors()
+      .then((d) => { if (on) setSecRows(d.rows || []) })
+      .catch(() => { /* 保留已有数据 */ })
+    return () => { on = false }
+  }, [ov && ov.date])
+  const toggleZt = (sector) => {
+    if (ztOpen === sector) { setZtOpen(null); return }
+    setZtOpen(sector)
+    if (ztMap[sector]) return
+    setZtBusy(true); setZtErr(null)
+    api.sectorZt(sector)
+      .then((d) => setZtMap((m) => ({ ...m, [sector]: d })))
+      .catch((e) => setZtErr(String(e?.message || e)))
+      .finally(() => setZtBusy(false))
+  }
 
   /* 图表 option：必须无条件调用 hooks（放在提前 return 之前） */
   const phase = (ov && ov.phase) || {}
@@ -266,6 +454,10 @@ export default function DashboardPage({ route, params, nav, goStock }) {
   const ladderTxt = Object.keys(ladder).length
     ? Object.keys(ladder).sort((a, b) => Number(a) - Number(b)).map((k) => `${k}板×${ladder[k]}`).join(' · ')
     : ''
+  const vol = stats.volume || null
+  const secAll = secRows.length ? secRows : [...secTop, ...secBottom]
+  const secGain = secAll.filter((s) => (s.avg_pct || 0) >= 0).sort((a, b) => b.avg_pct - a.avg_pct).slice(0, 10)
+  const secFall = secAll.filter((s) => (s.avg_pct || 0) < 0).sort((a, b) => a.avg_pct - b.avg_pct).slice(0, 5)
 
   return (
     <div className="page">
@@ -351,6 +543,45 @@ export default function DashboardPage({ route, params, nav, goStock }) {
         .dash-rule b{ color:var(--amber); margin-right:6px; font-weight:600; }
         .dash-disc{ color:#5f7598; font-size:11px; margin-top:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .dash-metric-sub{ }
+
+        /* 情绪周期时间轴(阶段段) */
+        .dash-tl2{ margin-top:6px; }
+        .dash-tl2-track{ display:flex; width:100%; height:34px; border-radius:8px; overflow:hidden;
+          border:1px solid rgba(255,255,255,.10); box-shadow: inset 0 0 10px rgba(0,0,0,.25); }
+        .dash-tl2-seg{ display:flex; align-items:center; justify-content:center; min-width:0; cursor:default; position:relative; }
+        .dash-tl2-seg:hover{ filter:brightness(1.35); }
+        .dash-tl2-seg.now{ outline:2px solid #fff; outline-offset:-2px; }
+        .dash-tl2-label{ font-size:12px; font-weight:700; color:#fff; text-shadow:0 1px 2px rgba(0,0,0,.6); white-space:nowrap; overflow:hidden; }
+        .dash-tl2-now{ color:var(--gold); font-weight:600; }
+        .dash-tl2-seq{ display:flex; flex-wrap:wrap; gap:6px 18px; margin-top:8px; color:#8fa3c0; font-size:11.5px; }
+        .dash-tl2-seqitem{ display:inline-flex; align-items:center; gap:5px; }
+        .dash-tl2-seqitem i{ width:9px; height:9px; border-radius:50%; display:inline-block; }
+        .dash-tl2-seqitem b{ color:#cdd9f0; font-weight:600; }
+        .dash-tl2-legend{ display:flex; flex-wrap:wrap; gap:4px 16px; margin-top:8px; color:#8fa3c0; font-size:11.5px; }
+        .dash-tl2-legend i{ width:9px; height:9px; border-radius:50%; display:inline-block; margin-right:5px; vertical-align:-1px; }
+
+        /* 板块行展开 */
+        .dash-sec-tbl td{ vertical-align:middle; }
+        .dash-sec-row{ cursor:pointer; }
+        .dash-sec-row:hover td{ background:rgba(76,141,255,.06); }
+        .dash-sec-row.open td{ background:rgba(242,193,78,.05); }
+        .caret{ display:inline-block; transition:transform .15s; color:#8fa3c0; }
+        .sec-detail-row td{ padding:0 10px 10px; background:rgba(0,0,0,.18); }
+        .sec-detail{ padding:10px 12px; border:1px solid rgba(255,255,255,.07); border-radius:10px; }
+        .sec-anchor{ display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center; background:rgba(242,193,78,.07);
+          border:1px dashed rgba(242,193,78,.35); border-radius:9px; padding:7px 10px; font-size:12.5px; color:#e8d9a8; margin-bottom:8px; }
+        .sec-anchor b{ color:#fff; }
+        .sec-zt-head{ color:#5f7598; font-size:11.5px; margin-bottom:6px; }
+        .zt-item{ display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; padding:6px 4px; border-bottom:1px dashed rgba(255,255,255,.06); font-size:12.5px; }
+        .zt-item:last-child{ border-bottom:0; }
+        .zt-item .nm{ font-weight:600; }
+        .zt-item .note{ color:#7f94b5; font-size:11.5px; flex:1 1 220px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .zt-item .note:hover{ white-space:normal; }
+        .role-chip{ display:inline-flex; align-items:center; border-radius:6px; padding:0 7px; font-size:11.5px; line-height:19px; }
+        .role-dragon{ background:rgba(245,68,75,.16); color:#ff8a8e; border:1px solid rgba(245,68,75,.45); }
+        .role-follow{ background:rgba(242,193,78,.12); color:#f2c14e; border:1px solid rgba(242,193,78,.4); }
+        .role-first{ background:rgba(76,141,255,.14); color:#7aa9ff; border:1px solid rgba(76,141,255,.4); }
+        .role-gray{ background:rgba(255,255,255,.05); color:#8fa3c0; border:1px solid rgba(255,255,255,.12); }
       `}</style>
 
       {/* 顶部小字条：行情标签 + 阶段 */}
@@ -454,6 +685,23 @@ export default function DashboardPage({ route, params, nav, goStock }) {
         </Card>
         <Card><Stat label="炸板率" value={`${fmt(stats.explosion, 1)}%`} big sub="炸板数 / 曾涨停数" /></Card>
         <Card><Stat label="两市成交额" value={fmtAmountYi(stats.amount_sum)} big sub="全市场成交（亿）" /></Card>
+        <Card>
+          <div className="stat-label">量能 · 较昨日同时段</div>
+          <div className="stat-value" style={{ fontSize: 22, marginTop: 2 }}>
+            {vol ? (
+              <span className={Number(vol.ratio) > 0.5 ? 'up' : Number(vol.ratio) < -0.5 ? 'down' : 'flat'}>
+                {Number(vol.ratio) > 0 ? '放量' : Number(vol.ratio) < 0 ? '缩量' : '持平'} {Number(vol.ratio) > 0 ? '+' : ''}{fmt(vol.ratio, 1)}%
+              </span>
+            ) : (
+              <span className="flat">—</span>
+            )}
+          </div>
+          <div className="stat-sub">
+            {vol
+              ? `${vol.basis}：今 ${fmtAmountYi(vol.today_yi)} vs 昨同期 ${fmtAmountYi(vol.prev_yi)}`
+              : '分时档案积累中，次日自动可对比'}
+          </div>
+        </Card>
         <Card><Stat label="昨日涨停今高开" value={stats.premium_open == null ? '—' : `${fmt(stats.premium_open, 2)}%`} sub="开盘溢价参考" /></Card>
       </div>
 
@@ -467,72 +715,51 @@ export default function DashboardPage({ route, params, nav, goStock }) {
         </Card>
       </div>
       {hist.length > 0 && (
-        <Card title="情绪阶段时间轴" extra={<span className="muted">色块 = 当日阶段 · 悬停查看日期</span>}>
-          <div className="dash-tl-dates">
-            <span>{hist[0].date}</span>
-            <span>{hist[hist.length - 1].date}</span>
-          </div>
-          <div className="dash-tl">
-            {hist.map((r, i) => {
-              const m = PHASE_META[r.phase]
-              return (
-                <b
-                  key={i}
-                  style={{ background: m ? m.color : '#4c8dff' }}
-                  title={`${r.date} · ${m ? m.label : r.phase}（涨停${r.zt} / 跌停${r.dt}）`}
-                />
-              )
-            })}
-          </div>
-          <div className="dash-tl-meta">
-            {PHASE_KEYS.map((k) => (
-              <span key={k}><i style={{ background: PHASE_META[k].color }} />{PHASE_META[k].label}</span>
-            ))}
-          </div>
+        <Card title="情绪周期时间轴" extra={<span className="muted">近 {hist.length} 个交易日 · 同色段 = 同一情绪阶段 · 悬停查看该阶段统计</span>}>
+          <PhaseTimeline hist={hist} />
         </Card>
       )}
 
       {/* 4) 板块强弱 */}
       <div className="grid-28">
-        <Card title="板块强弱榜" extra={<span className="muted">主线 = 总龙所在板块（金色）</span>}>
-          <div className="table-wrap">
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th>板块</th><th>涨跌幅</th><th>今涨停</th><th>5日涨停</th><th>成交额</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr className="dash-sep"><td colSpan={5}>涨幅前 {secTop.length}<span>资金主攻方向</span></td></tr>
-                {secTop.map((s) => (
-                  <tr key={s.sector}>
-                    <td>
-                      <span style={{ fontWeight: 600 }}>{s.sector}</span>
-                      {s.is_dragon_sector && <Tag cls="tag-main" >主线</Tag>}
-                    </td>
-                    <td><PctText value={s.avg_pct} /></td>
-                    <td className="num">{s.zt_today ?? '—'}</td>
-                    <td className="num">{s.zt_5d ?? '—'}</td>
-                    <td className="num">{fmtAmountYi(s.amount)}</td>
-                  </tr>
-                ))}
-                <tr className="dash-sep"><td colSpan={5}>垫底 {secBottom.length}<span>回避方向</span></td></tr>
-                {secBottom.map((s) => (
-                  <tr key={s.sector}>
-                    <td>
-                      <span style={{ fontWeight: 600 }}>{s.sector}</span>
-                      {s.is_dragon_sector && <Tag cls="tag-main">主线</Tag>}
-                    </td>
-                    <td><PctText value={s.avg_pct} /></td>
-                    <td className="num">{s.zt_today ?? '—'}</td>
-                    <td className="num">{s.zt_5d ?? '—'}</td>
-                    <td className="num">{fmtAmountYi(s.amount)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
+      <Card
+        title="板块强弱榜"
+        extra={
+          <span className="muted">
+            主线 = 总龙所在板块（金）；点板块行展开“今日涨停股分层（龙头/补涨/跟风）”；* = 量能档案积累中
+          </span>
+        }
+      >
+        <div className="table-wrap">
+          <table className="tbl dash-sec-tbl">
+            <thead>
+              <tr>
+                <th>板块</th><th>涨跌幅</th><th>今涨停</th><th>5日涨停</th>
+                <th>成交额</th><th>量能(较昨同时段)</th><th />
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="dash-sep"><td colSpan={7}>涨幅居前 · 资金主攻方向</td></tr>
+              {secGain.length === 0 && <tr><td colSpan={7}><Empty text="暂无板块数据" /></td></tr>}
+              {secGain.map((s) => (
+                <SectorRow key={s.sector} s={s} open={ztOpen === s.sector}
+                  busy={ztBusy} err={ztErr} detail={ztMap[s.sector]}
+                  onToggle={() => toggleZt(s.sector)} goStock={goStock} />
+              ))}
+              {secFall.length > 0 && <tr className="dash-sep"><td colSpan={7}>跌幅居前 · 回避方向</td></tr>}
+              {secFall.map((s) => (
+                <SectorRow key={s.sector} s={s} open={ztOpen === s.sector}
+                  busy={ztBusy} err={ztErr} detail={ztMap[s.sector]}
+                  onToggle={() => toggleZt(s.sector)} goStock={goStock} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="muted small" style={{ marginTop: 8, color: '#5f7598' }}>
+          分层口径说明：龙头 = 板块内今日最高连板且成交额居前；同高/中位 = 跟风（忌讳追高）；
+          首板 = 补涨/试错观察；板块高标(anchors)今日未封板表示总龙断板/歇整，注意“断板即撤”。
+        </div>
+      </Card>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
           {/* 总龙快照 */}

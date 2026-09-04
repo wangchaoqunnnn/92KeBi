@@ -101,6 +101,18 @@ def market_live():
     return {"rows": rows[:40], "tick_ts": st["tick_ts"], "date": db.meta_get("last_date")}
 
 
+@router.get("/market/sector-zt")
+def market_sector_zt(sector: str = Query("", max_length=30)):
+    """板块内当日涨停股 + 龙头/补涨/跟风分层判断(实盘)"""
+    if DATA_SOURCE != "real":
+        raise HTTPException(400, "该接口仅实盘(real)模式可用")
+    from ..real import market as real_mkt
+    sector = sector.strip()
+    if not sector:
+        raise HTTPException(422, "缺少 sector 参数")
+    return real_mkt.sector_zt_detail(sector)
+
+
 # ---------------------------------------------------------------- dashboard
 def _view():
     return market_cache.get_view()
@@ -133,7 +145,8 @@ def dashboard_overview():
                                      "desc", "position_range_pct", "mode_text")},
         "stats": {k: v["stats"][k] for k in ("zt_count", "dt_count", "up_count", "down_count",
                                              "mean_pct", "amount_sum", "max_streak", "ladder",
-                                             "premium_open", "premium_end", "explosion")},
+                                             "premium_open", "premium_end", "explosion",
+                                             "volume") if k in v["stats"]},
         "stats_history": v["stats_history"][-40:],
         "sectors": {"top": sectors[:5], "bottom": sectors[-3:][::-1]},
         "leaders": {

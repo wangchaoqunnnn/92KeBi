@@ -284,6 +284,7 @@ def analyze_real():
         "up_count": mkt.get("up", 0), "down_count": mkt.get("down", 0),
         "mean_pct": idx.get(full.get("quote_date")) or mkt.get("mean_pct"),
         "amount_sum": mkt.get("amount_yi", 0),
+        "volume": mkt.get("volume"),
         "max_streak": max(ladder_map.values()) if ladder_map else 0,
         "ladder": mkt_ladder,
         "premium_end": full.get("premium_end"),
