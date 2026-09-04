@@ -228,6 +228,9 @@ def _acq_fast():
                                         q.get("price"), q.get("pre_close"), q.get("open"),
                                         q.get("high"), q.get("low"), q.get("volume"),
                                         q.get("amount"), turnover=q.get("turnover"))
+        if q.get("outer") is not None or q.get("inner") is not None:
+            quotes[m["code"]]["outer"] = q.get("outer")
+            quotes[m["code"]]["inner"] = q.get("inner")
     return quotes, src, ms, None
 
 

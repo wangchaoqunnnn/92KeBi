@@ -61,6 +61,27 @@ def _stock_real_detail(code: str):
     sec_stat = next((r for r in (d.get("sector_stats") or [])
                      if r["sector"] == (d["meta"].get("sector") or "")), {})
     heat = min(100, 45 + (sec_stat.get("zt_today") or 0) * 6)
+    # ---- 当日量能 / 主动净买(暗盘) / 主力净流入 ----
+    flow = None
+    try:
+        from ..real import moneyflow
+        qq = real_mkt.snapshot().get("quotes", {}).get(code) or {}
+        if qq.get("outer") is None:
+            try:  # 新浪快照无盘口外内盘时, 用腾讯单只补取
+                from ..providers import tencent as _tc, sina as _sa
+                got = _tc.fetch_hq_quotes([_sa.to_symbol(code)])
+                if got:
+                    g = got[code]
+                    qq = {**qq, "outer": g.get("outer"), "inner": g.get("inner"),
+                          "amount": qq.get("amount") or g.get("amount"),
+                          "price": qq.get("price") or g.get("price")}
+            except Exception:
+                pass
+        flow = moneyflow.stock_flow(code, quote=qq if qq.get("price") else None)
+        if flow and flow.get("main_net") is None and not qq:
+            flow = None
+    except Exception as e:  # noqa
+        flow = None
     return {
         "meta": {**d["meta"], "sector": d["meta"].get("sector") or "未分类", "market": "沪深A"},
         "sector_heat": heat,
@@ -79,6 +100,7 @@ def _stock_real_detail(code: str):
         "kline": [{f: b[f] for f in CANDLE_FIELDS} for b in bars],
         "news": [],
         "mode": "real",
+        "flow": flow,
     }
 
 

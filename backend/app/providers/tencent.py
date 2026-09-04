@@ -71,6 +71,7 @@ def fetch_hq_quotes(symbols, timeout=8):
             res[code] = {
                 "code": code, "symbol": sym, "name": f[1],
                 "price": _f(f[3]), "pre_close": _f(f[4]), "open": _f(f[5]),
+                "outer": _f(f[7]), "inner": _f(f[8]),
                 "high": _f(f[33]), "low": _f(f[34]),
                 "volume": _f(f[36]), "amount": (_f(f[37]) or 0) * 1e4,
                 "turnover": _f(f[38]), "pe": _f(f[39]),

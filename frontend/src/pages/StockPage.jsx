@@ -350,6 +350,67 @@ export default function StockPage({ route, params, nav, goStock }) {
         </div>
       </Card>
 
+      {/* 1.5) 当日资金卡: 量能/暗盘(主动净买)/主力净流入 */}
+      <Card
+        title="当日资金 · 量能 & 净流入"
+        extra={<Tag cls="tag-gray">绝对额口径(亿元)· 主动净买=外盘−内盘</Tag>}
+      >
+        {!d.flow ? (
+          <Empty text="实盘模式提供该数据（新浪资金流/腾讯盘口）；当前为模拟或无数据。" />
+        ) : (
+          <div className="kpis">
+            <Kpi label="当日量能" wide>
+              {(() => {
+                const v = d.flow.volume
+                if (!v) return <span className="flat">—</span>
+                const cls = v.state === '放量' ? 'up' : v.state === '缩量' ? 'down' : 'flat'
+                return (
+                  <span>
+                    <span className={`num ${cls}`}>{fmt(v.today_yi)}亿</span>
+                    <span className="muted2 small" style={{ marginLeft: 8 }}>折算全日 {fmt(v.whole_day_yi)}亿 · 近5日均 {fmt(v.avg5_yi)}亿</span>
+                  </span>
+                )
+              })()}
+              <div className="kpi-sub">
+                {(() => {
+                  const v = d.flow.volume
+                  return v ? `全日折算为近5日均的 ${fmt(v.times, 2)} 倍 → ${v.state}` : '—'
+                })()}
+              </div>
+            </Kpi>
+            <Kpi label="暗盘净流入 · 主动净买(外盘−内盘)">
+              {(() => {
+                const a = d.flow.active_net
+                if (!a) return <span className="flat">—</span>
+                const cls = a.diff_yi > 0 ? 'up' : 'down'
+                return <span className={cls}>{a.diff_yi > 0 ? '+' : ''}{fmt(a.diff_yi, 3)}亿</span>
+              })()}
+              <div className="kpi-sub">
+                {(() => {
+                  const a = d.flow.active_net
+                  return a ? `外盘 ${fmt((a.outer || 0) / 1e4, 0)}万手 / 内盘 ${fmt((a.inner || 0) / 1e4, 0)}万手 · ${a.source}` : '盘口数据获取中…'
+                })()}
+              </div>
+            </Kpi>
+            <Kpi label="主力净流入(最近交易日)">
+              {(() => {
+                const m2 = d.flow.main_net
+                if (!m2) return <span className="flat">—</span>
+                const cls = m2.net_yi > 0 ? 'up' : m2.net_yi < 0 ? 'down' : 'flat'
+                return <span className={cls}>{m2.net_yi > 0 ? '+' : ''}{fmt(m2.net_yi)}亿</span>
+              })()}
+              <div className="kpi-sub">
+                {(() => {
+                  const m2 = d.flow.main_net
+                  if (!m2) return '—'
+                  return `数据日 ${m2.date} · 超大单 ${m2.super_yi != null ? (m2.super_yi > 0 ? '+' : '') + fmt(m2.super_yi) + '亿' : '—'} · ${m2.source}`
+                })()}
+              </div>
+            </Kpi>
+          </div>
+        )}
+      </Card>
+
       {/* 2) 左侧主要 + 右侧窄列 */}
       <div className="grid-28">
         <div className="col-stack">

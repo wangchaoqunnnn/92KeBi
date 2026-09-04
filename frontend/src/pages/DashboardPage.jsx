@@ -360,16 +360,17 @@ function ztRoleTone(role) {
   return 'gray'
 }
 
-function VolCell({ v }) {
-  const r = Number(v)
-  if (v === null || v === undefined || Number.isNaN(r)) {
+function VolCell({ s }) {
+  const today = s && s.amount != null ? Number(s.amount) : null
+  const prev = s && s.vol_prev_yi != null ? Number(s.vol_prev_yi) : null
+  if (today === null || prev === null) {
     return <span className="muted2" title="分时档案自今日开始积累，次日(明日)起可对比昨日同时段">—*</span>
   }
-  const cls = r > 0.5 ? 'up' : r < -0.5 ? 'down' : 'flat'
-  const txt = r > 0.5 ? '放量' : r < -0.5 ? '缩量' : '持平'
+  const d = today - prev
+  const cls = d > 0 ? 'up' : d < 0 ? 'down' : 'flat'
   return (
-    <span className={`num ${cls}`} style={{ fontWeight: 600 }}>
-      {r > 0 ? '+' : ''}{fmt(r, 1)}%<i className="muted2 small" style={{ fontStyle: 'normal', marginLeft: 4 }}>{txt}</i>
+    <span className={`num ${cls}`} style={{ fontWeight: 600 }} title={`今日 ${fmt(today, 1)}亿 · 昨同期 ${fmt(prev, 1)}亿`}>
+      {d >= 0 ? '多' : '少'}{Math.abs(d).toFixed(1)}亿
     </span>
   )
 }
@@ -396,7 +397,7 @@ function SectorRow({ s, open, busy, err, detail, onToggle, goStock }) {
         </td>
         <td className="num">{s.zt_5d ?? '—'}</td>
         <td className="num">{fmtAmountYi(s.amount)}</td>
-        <td><VolCell v={s.vol_ratio} /></td>
+        <td><VolCell s={s} /></td>
         <td><span className="caret" style={{ transform: open ? 'rotate(180deg)' : 'none' }}>▾</span></td>
       </tr>
       {open && (
@@ -526,6 +527,8 @@ export default function DashboardPage({ route, params, nav, goStock }) {
     ? Object.keys(ladder).sort((a, b) => Number(a) - Number(b)).map((k) => `${k}板×${ladder[k]}`).join(' · ')
     : ''
   const vol = stats.volume || null
+  const volDiff = vol && vol.today_yi != null && vol.prev_yi != null ? Number(vol.today_yi) - Number(vol.prev_yi) : null
+  const volCls = volDiff == null ? 'flat' : volDiff > 0 ? 'up' : volDiff < 0 ? 'down' : 'flat'
   const secAll = secRows.length ? secRows : [...secTop, ...secBottom]
   const sortedSecs = sortRows(secAll, secSort.key, secSort.dir)
 
@@ -759,17 +762,18 @@ export default function DashboardPage({ route, params, nav, goStock }) {
           <div className="stat-label">量能 · 较昨日同时段</div>
           <div className="stat-value" style={{ fontSize: 22, marginTop: 2 }}>
             {vol ? (
-              <span className={Number(vol.ratio) > 0.5 ? 'up' : Number(vol.ratio) < -0.5 ? 'down' : 'flat'}>
-                {Number(vol.ratio) > 0 ? '放量' : Number(vol.ratio) < 0 ? '缩量' : '持平'} {Number(vol.ratio) > 0 ? '+' : ''}{fmt(vol.ratio, 1)}%
+              <span className={volCls}>
+                今 {fmt(vol.today_yi, 0)}亿
+                <span className="muted2" style={{ fontSize: 13, marginLeft: 8 }}>昨同期 {fmt(vol.prev_yi, 0)}亿</span>
               </span>
             ) : (
               <span className="flat">—</span>
             )}
           </div>
           <div className="stat-sub">
-            {vol
-              ? `${vol.basis}：今 ${fmtAmountYi(vol.today_yi)} vs 昨同期 ${fmtAmountYi(vol.prev_yi)}`
-              : '分时档案积累中，次日自动可对比'}
+            {volDiff != null
+              ? `较昨 ${volDiff >= 0 ? '多' : '少'} ${Math.abs(volDiff).toFixed(0)}亿（${vol.basis}）`
+              : vol ? '对比数据计算中…' : '分时档案积累中，次日自动可对比'}
           </div>
         </Card>
         <Card><Stat label="昨日涨停今高开" value={stats.premium_open == null ? '—' : `${fmt(stats.premium_open, 2)}%`} sub="开盘溢价参考" /></Card>

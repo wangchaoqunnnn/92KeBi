@@ -31,6 +31,8 @@ export default function OpsPage({ route, params, nav, goStock }) {
   const sells = sortRows((data?.sell) || [], sSort.key, sSort.dir)
   const watch = sortRows((data?.watch) || [], wSort.key, wSort.dir)
   const stats = data?.stats || {}
+  const win = data?.window || null
+  const tradeOpen = !!win && !!win.open
 
   const act = async (fn, okMsg) => {
     setBusy(true)
@@ -81,6 +83,9 @@ export default function OpsPage({ route, params, nav, goStock }) {
         </div>
         <div className="toolbar">
           <Tag cls="tag-gray">数据 {data?.date || '—'}</Tag>
+          <Tag tone={tradeOpen ? 'buy' : 'gray'} cls={tradeOpen ? '' : 'tag-watch'}>
+            {tradeOpen ? `交易时段 ${win.start}–${win.end}` : `非交易时段(买卖暂停 ${win?.start}–${win?.end})`}
+          </Tag>
           <button className="btn btn-sm" disabled={busy} onClick={() => act(api.opsFlush, '')}>立即扫描</button>
         </div>
       </div>
@@ -108,7 +113,7 @@ export default function OpsPage({ route, params, nav, goStock }) {
                 })}
               </div>
             )}
-            <div className="ops-note">规则：买点=规则引擎买入信号触发；卖点=止损-5%/断板/加速一致/不及预期等（详见卖出池“卖出理由”）。</div>
+            <div className="ops-note">规则：买卖操作仅于交易日 09:25–14:59 执行（买点=买入信号触发；卖点=止损-5%/断板/加速一致/不及预期等），其余时段自动暂停；观察池随时记录。</div>
           </Card>
 
           {/* 统计 */}
@@ -151,7 +156,9 @@ export default function OpsPage({ route, params, nav, goStock }) {
                         <td>
                           <div className="ops-act">
                             <button className="btn btn-sm" onClick={() => goStock(r.code)}>查看</button>
-                            <button className="btn btn-sm btn-danger" onClick={() => manualSell(r.code)}>了结</button>
+                            <button className="btn btn-sm btn-danger" disabled={!tradeOpen} title={tradeOpen ? '按当前价了结并结算' : '仅 09:25–14:59 交易时段可买卖'} onClick={() => manualSell(r.code)}>
+                              {tradeOpen ? '了结' : '暂停'}
+                            </button>
                             <button className="btn btn-sm btn-ghost" onClick={() => ignore('buy', r.code)}>忽略</button>
                           </div>
                         </td>
