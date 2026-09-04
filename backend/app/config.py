@@ -71,4 +71,8 @@ RISK = {
     "fees_rate": 0.0015,           # 单边交易成本(佣金+滑点近似)
 }
 
+# 企业微信群机器人 Webhook(可选): 买点入池等事件推送微信。
+# 留空则不推送(可在群机器人添加后填入, 支持多key用逗号分隔)。
+WECHAT_WEBHOOK = os.environ.get("WECHAT_WEBHOOK", "").strip()
+
 os.makedirs(DATA_DIR, exist_ok=True)

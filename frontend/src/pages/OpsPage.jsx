@@ -76,10 +76,11 @@ export default function OpsPage({ route, params, nav, goStock }) {
         .ops-act .btn{ padding:2px 8px; font-size:12px; }
         .ops-watch-add{ display:flex; gap:6px; align-items:center; }
         .ops-watch-add input{ width:130px; }
-        .ops-reason-cell{ min-width:220px; max-width:440px; }
+        .ops-reason-cell{ min-width:220px; max-width:460px; }
         .ops-reason{ margin:0; line-height:1.6; font-size:12.5px; color:#b9c6dd; word-break:break-word;
-          display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; overflow:hidden; cursor:pointer; }
-        .ops-reason.open{ -webkit-line-clamp:unset; display:block; overflow:visible; }
+          white-space:normal; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; overflow:hidden; cursor:pointer; }
+        .ops-reason-full{ margin:0; line-height:1.7; font-size:12.5px; color:#dde7fb; word-break:break-word;
+          white-space:normal; overflow:visible; }
         .ops-reason:hover{ color:#e9effc; }
         .ops-more{ display:inline-block; margin-left:4px; font-size:11.5px; color:var(--accent2); cursor:pointer; user-select:none; }
         .ops-more:hover{ text-decoration:underline; }
@@ -252,17 +253,26 @@ export default function OpsPage({ route, params, nav, goStock }) {
                           <td className="num">{dateShort(r.updated_at)} {timeShort(r.updated_at)}</td>
                           <td className="num">{r.last_date || r.entry_date || '—'}</td>
                           <td className="ops-reason-cell">
-                            <div
-                              className={`ops-reason ${isOpen ? 'open' : ''}`}
-                              title={isOpen ? undefined : reason}
-                              onClick={(e) => { e.stopPropagation(); toggleReason(r.id) }}
-                            >
-                              {reason}
-                            </div>
-                            {long && (
-                              <span className="ops-more" onClick={(e) => { e.stopPropagation(); toggleReason(r.id) }}>
-                                {isOpen ? '收起 ▲' : '展开 ▼'}
-                              </span>
+                            {isOpen ? (
+                              <>
+                                <div className="ops-reason-full">{reason}</div>
+                                <span className="ops-more" onClick={(e) => { e.stopPropagation(); toggleReason(r.id) }}>收起 ▲</span>
+                              </>
+                            ) : (
+                              <>
+                                <div
+                                  className="ops-reason"
+                                  title={reason}
+                                  onClick={(e) => { e.stopPropagation(); toggleReason(r.id) }}
+                                >
+                                  {reason}
+                                </div>
+                                {long && (
+                                  <span className="ops-more" onClick={(e) => { e.stopPropagation(); toggleReason(r.id) }}>
+                                    展开 ▼
+                                  </span>
+                                )}
+                              </>
                             )}
                           </td>
                           <td>

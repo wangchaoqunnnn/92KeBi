@@ -85,6 +85,66 @@ def _today():
     return datetime.now().strftime("%Y-%m-%d")
 
 
+# ---------------------------------------------------------------- 演示数据(卖出池样例)
+def _ensure_demo_sell():
+    """向卖出池插入1条模拟演示数据(仅一次), 便于查看卖出池结构/统计"""
+    try:
+        if db.meta_get("ops_demo_sell_v1"):
+            return
+        now = _now()
+        pnl = round((7.12 / 6.98 - 1) * 100, 2)
+        with db.tx() as con:
+            con.execute(
+                "INSERT INTO ops_items(code,name,sector,pool,status,strategy,signal,reason,"
+                "entry_date,entry_time,entry_price,exit_date,exit_time,exit_price,exit_reason,"
+                "pnl_pct,hold_days,created_at,updated_at,last_date,note) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                ("000592", "平潭发展", "农林牧渔", "sell", "closed", "buyang", "低位首板确认",
+                 "低位首板确认：低位首板涨停，题材与主线一致 → 补涨买点（演示样例）",
+                 "2026-09-03", "09:41:07", 6.98, "2026-09-04", "13:22:41", 7.12,
+                 "加速一致/一致转分歧，止盈离场（演示样例）",
+                 pnl, 1, now, now, "2026-09-04", "[演示样例·仅供查看卖出池布局，可忽略不计入实盘]"))
+        db.meta_set("ops_demo_sell_v1", "1")
+        log.info("demo sell row inserted")
+    except Exception as e:
+        log.warning("demo sell: %s", e)
+
+
+# ---------------------------------------------------------------- 微信推送
+def _wechat_push(text):
+    """企业微信群机器人推送(webhook 支持逗号分隔多地址)。未配置则跳过。"""
+    from .config import WECHAT_WEBHOOK
+    hooks = [h.strip() for h in WECHAT_WEBHOOK.split(",") if h.strip()]
+    if not hooks:
+        log.debug("WECHAT_WEBHOOK 未配置, 跳过微信推送")
+        return {"sent": 0, "reason": "未配置 WECHAT_WEBHOOK"}
+    import json as _j
+    import urllib.request as _ur
+    body = {"msgtype": "text", "text": {"content": str(text)[:1900]}}
+    data = _j.dumps(body, ensure_ascii=False).encode("utf-8")
+    sent = 0
+    err = None
+    for url in hooks:
+        try:
+            req = _ur.Request(url, data=data, headers={"Content-Type": "application/json"})
+            _ur.urlopen(req, timeout=6)
+            sent += 1
+        except Exception as e:  # noqa
+            err = str(e)[:120]
+            log.warning("wechat push fail: %s", e)
+    return {"sent": sent, "reason": err}
+
+
+def wechat_push_test():
+    return _wechat_push("【92K 打板·测试】微信推送已接通 ✅\n时间 " + _now())
+
+
+def _wechat_status():
+    from .config import WECHAT_WEBHOOK
+    hooks = [h for h in WECHAT_WEBHOOK.split(",") if h.strip()]
+    return {"enabled": bool(hooks), "hooks": len(hooks)}
+
+
 def _price_for(code, ctx):
     """实时价: 快照报价优先(实盘), 否则当日合成K线收盘"""
     try:
@@ -134,6 +194,7 @@ def _watch_codes():
 def sweep(view=None, ctx=None):
     """自动盯盘: 买点→买入池; 持仓卖点→卖出池; 模式候选→观察池。幂等、低写入。"""
     setup()
+    _ensure_demo_sell()
     if not view or not ctx:
         view, ctx = _signal_view()
     if not view or not ctx or not ctx.get("feats"):
@@ -174,6 +235,12 @@ def sweep(view=None, ctx=None):
                          s.get("signal"), reason, date, _now(), price, now, now, date))
                 opened += 1
                 _prompt(code, name, "buy", s.get("strategy"), s.get("signal"), price, reason)
+                try:
+                    _wechat_push(
+                        f"【92K 打板·买点提示】\n{name}（{code}）{s.get('sector') or ''}\n"
+                        f"信号：{s.get('signal')}\n价格：{price}\n时间：{date} {_now()[11:]}\n理由：{reason}")
+                except Exception as e:  # noqa
+                    log.warning("wechat buy push: %s", e)
             except Exception as e:  # noqa
                 log.warning("buy add %s: %s", code, e)
 
@@ -370,6 +437,7 @@ def overview():
         "date": date,
         "mode": "real" if DATA_SOURCE == "real" else "mock",
         "window": window_info(),
+        "wechat": _wechat_status(),
         "stats": {
             "buy_open": len(buy_rows), "watch": len(watch_rows), "sold": len(sell_rows),
             "today_prompt_buy": sum(1 for p in prompts if p["type"] == "buy"),

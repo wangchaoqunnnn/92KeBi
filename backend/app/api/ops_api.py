@@ -34,3 +34,9 @@ def ops_manual_sell(code: str = Query(...)):
 @router.post("/manual-watch")
 def ops_manual_watch(code: str = Query(...)):
     return ops.manual_watch(code)
+
+
+@router.post("/push-test")
+def ops_push_test():
+    """微信推送连通性测试(需配置 WECHAT_WEBHOOK 环境变量)"""
+    return {"ok": True, **ops.wechat_push_test()}
