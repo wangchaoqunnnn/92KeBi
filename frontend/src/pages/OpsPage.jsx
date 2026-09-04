@@ -86,9 +86,12 @@ export default function OpsPage({ route, params, nav, goStock }) {
         .ops-reason-full{ margin:0; line-height:1.7; font-size:12.5px; color:#dde7fb; word-break:break-word;
           white-space:normal; overflow:visible; }
         .ops-long{ white-space:normal; word-break:break-word; line-height:1.65; font-size:12.5px; color:#c6d3ea;
-          min-width:190px; max-width:360px; }
+          min-width:190px; max-width:400px; }
         .tbl td.ops-long{ white-space:normal !important; word-break:break-word !important; vertical-align:top; }
-        .ops-reason-cell{ white-space:normal !important; min-width:220px; max-width:460px; }
+        /* 打板台全部表格: 单元格强制换行, 杜绝理由被 nowrap 截断 */
+        .ops-tbl th{ white-space:nowrap; }
+        .ops-tbl td{ white-space:normal !important; word-break:break-word !important; overflow-wrap:anywhere; vertical-align:middle; }
+        .ops-tbl td.num, .ops-tbl .num{ white-space:nowrap; }
         .ops-reason:hover{ color:#e9effc; }
         .ops-more{ display:inline-block; margin-left:4px; font-size:11.5px; color:var(--accent2); cursor:pointer; user-select:none; }
         .ops-more:hover{ text-decoration:underline; }
@@ -150,7 +153,7 @@ export default function OpsPage({ route, params, nav, goStock }) {
           >
             {buys.length === 0 ? <Empty text="买入池为空：出现买点提示后自动加入" /> : (
               <div className="table-wrap">
-                <table className="tbl">
+                <table className="tbl ops-tbl">
                   <thead><tr>
                     <SortTh label="名称" sortKey="name" sort={bSort} />
                     <SortTh label="买点时间" sortKey="entry_time" sort={bSort} />
@@ -192,7 +195,7 @@ export default function OpsPage({ route, params, nav, goStock }) {
           <Card title={`卖出池 · 已结算 ${sells.length}`} extra={<span className="muted">自动记录买入/卖出时间价格、盈亏与买卖理由</span>}>
             {sells.length === 0 ? <Empty text="卖出池为空：持仓触发卖点后自动结算到这里" /> : (
               <div className="table-wrap">
-                <table className="tbl">
+                <table className="tbl ops-tbl">
                   <thead><tr>
                     <SortTh label="名称" sortKey="name" sort={sSort} />
                     <SortTh label="买入时间" sortKey="entry_time" sort={sSort} />
@@ -244,7 +247,7 @@ export default function OpsPage({ route, params, nav, goStock }) {
           >
             {watch.length === 0 ? <Empty text="观察池为空：符合模式的龙头/补涨/切换候选会自动记录（含日期与理由）" /> : (
               <div className="table-wrap">
-                <table className="tbl">
+                <table className="tbl ops-tbl">
                   <thead><tr>
                     <SortTh label="名称" sortKey="name" sort={wSort} />
                     <SortTh label="评分" sortKey="score" sort={wSort} />
