@@ -130,6 +130,9 @@ class Scheduler:
         await asyncio.to_thread(real_mkt.refresh_quotes)
         await asyncio.to_thread(real_sample.sync_sample_stocks)
         await asyncio.to_thread(real_sample.crawl_sample)
+        # 样本K线就绪后重跑一轮板块历史补齐(样本外的板块成员此时才可判断覆盖)
+        real_mkt._ENRICH_DAY = ""
+        real_mkt._maybe_enrich_async()
 
     async def start(self):
         _state["started_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

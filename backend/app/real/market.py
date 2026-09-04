@@ -246,6 +246,7 @@ def refresh_quotes():
             router._record("sina_market", ms, ok=True)
             _store_refresh(quotes, src, ms, full=True)
             _maybe_archive()
+            _maybe_enrich_async()  # 板块历史覆盖不足时懒补齐(后台线程, 每日至多一轮)
             return True
         except Exception as e:
             log.error("full market fetch fail: %s", e)
@@ -459,6 +460,158 @@ def _sector_5d_series():
     except Exception as e:
         log.warning("sector 5d series: %s", e)
         return {}
+
+
+_ENRICH_DAY = ""
+_ENRICH_LOCK = threading.Lock()
+_ENRICH_ATTEMPT_TS = 0.0
+_ENRICH_CODES = 0
+_ENRICH_LAST = ""
+
+
+def _insert_mini_kline(code, name, rows, max_day=""):
+    """把单只股票近N日日K写入 bars(最小字段, 已存在日期忽略)。
+    仅写入历史日(day < max_day; 当日由全市场实时聚合覆盖, 不落K)。"""
+    rate = sina.limit_rate(code, name)
+    prev = None
+    out = []
+    for r in rows:
+        try:
+            d = str(r["day"])
+            if max_day and d >= max_day:
+                continue
+            c = float(r["close"])
+            o = float(r["open"]) if r.get("open") is not None else c
+            h = float(r["high"]) if r.get("high") is not None else max(o, c)
+            l = float(r["low"]) if r.get("low") is not None else min(o, c)
+            if prev is None:
+                pct = 0.0
+            else:
+                pct = round((c / prev - 1) * 100, 2)
+            out.append((d, code, o, h, l, c, round(prev, 2) if prev else c, pct,
+                        0.0, None, float(r.get("volume") or 0), 0, 0, 0, 0))
+            prev = c
+        except Exception:
+            continue
+    if out:
+        with db.tx() as con:
+            con.executemany(
+                "INSERT OR IGNORE INTO bars(date,code,open,high,low,close,pre_close,pct,turnover,"
+                "amount,volume,streak,limit_up,limit_down,one_word) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", out)
+
+
+def _enrich_targets(qd, quotes):
+    """找出“近5个历史交易日有效样本<3只”的板块及其待补代码(当日成交额靠前)"""
+    c2i = get_industry_cache().get("code2industry", {})
+    hist_dates = [r["date"] for r in db.query(
+        "SELECT DISTINCT date FROM bars WHERE date<? ORDER BY date DESC LIMIT 6", (qd,))]
+    if len(hist_dates) < 5:
+        return None  # 历史日不足, 无法判断
+    lo, hi = hist_dates[-1], hist_dates[0]
+    # 每只股票在近5个历史日各有几根K(有则基本可贡献该日板块均值)
+    day_counts = {}
+    for b in db.query("SELECT code, COUNT(DISTINCT date) n FROM bars "
+                      "WHERE date BETWEEN ? AND ? GROUP BY code", (lo, hi)):
+        day_counts[b["code"]] = b["n"]
+    members = {}
+    for c, q in quotes.items():
+        ind = c2i.get(c)
+        if not ind:
+            continue
+        members.setdefault(ind, []).append((c, q.get("amount") or 0))
+    needed = []
+    for ind, lst in members.items():
+        if len(lst) < 3:
+            continue
+        lst.sort(key=lambda x: -x[1])
+        good = [c for c, _ in lst if day_counts.get(c, 0) >= 3]
+        if len(good) >= 3:
+            continue
+        want = 3 - len(good)
+        for c, _ in lst:
+            if want <= 0:
+                break
+            if day_counts.get(c, 0) < 3:  # 该股缺历史K或覆盖不足
+                needed.append(c)
+                want -= 1
+    return needed or []
+
+
+def enrich_sector_history():
+    """为样本池覆盖不足的板块补齐近12日历史K线(取板块当日成交额靠前成员)。
+    每交易日仅做一轮(完成或放弃后置 _ENRICH_DAY)。由刷新线程在盘后/启动时懒触发,
+    亦可在 http 管理端手动调用。返回统计。"""
+    global _ENRICH_DAY, _ENRICH_ATTEMPT_TS, _ENRICH_CODES, _ENRICH_LAST
+    if not _ENRICH_LOCK.acquire(blocking=False):
+        return {"ok": False, "reason": "busy"}
+    try:
+        qd = _state.get("quote_date") or ""
+        quotes = _state.get("quotes") or {}
+        if not qd or not quotes:
+            return {"ok": False, "reason": "无行情"}
+        if _ENRICH_DAY == qd:
+            return {"ok": True, "cached": True, "enriched": _ENRICH_CODES}
+        targets = _enrich_targets(qd, quotes)
+        if targets is None:
+            _ENRICH_DAY = qd  # 历史日不足也无从补, 记当日避免空转
+            return {"ok": False, "reason": "历史日不足"}
+        if not targets:
+            _ENRICH_DAY = qd
+            _ENRICH_CODES = 0
+            _ENRICH_LAST = "ok(覆盖足够)"
+            return {"ok": True, "enriched": 0}
+        targets = targets[:60]  # 单轮上限, 防极端空转
+        from ..providers import router
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        meta = {r["code"]: r for r in db.query("SELECT code,name FROM stocks")}
+        done = 0
+
+        def work(code):
+            nm = (meta.get(code) or {}).get("name") or code
+            try:
+                rows = router.fetch_kline_any(code, n=12)
+                _insert_mini_kline(code, nm, rows, max_day=qd)
+                return True
+            except Exception:
+                return False
+
+        with ThreadPoolExecutor(max(3, min(10, len(targets)))) as ex:
+            futs = [ex.submit(work, c) for c in targets]
+            for fu in as_completed(futs):
+                try:
+                    if fu.result():
+                        done += 1
+                except Exception:
+                    pass
+        _ENRICH_DAY = qd
+        _ENRICH_CODES = done
+        _ENRICH_LAST = "ok" if done else "全部失败"
+        log.info("sector history enrich(%s): codes=%d ok=%d", qd, len(targets), done)
+        return {"ok": True, "enriched": done, "total": len(targets)}
+    except Exception as e:
+        log.warning("sector history enrich: %s", e)
+        return {"ok": False, "error": str(e)[:120]}
+    finally:
+        _ENRICH_ATTEMPT_TS = time.time()
+        _ENRICH_LOCK.release()
+
+
+def enrich_status():
+    return {"quote_date": _ENRICH_DAY, "codes": _ENRICH_CODES, "last": _ENRICH_LAST,
+            "attempt_ts": _ENRICH_ATTEMPT_TS,
+            "attempt_time": time.strftime("%H:%M:%S", time.localtime(_ENRICH_ATTEMPT_TS))
+            if _ENRICH_ATTEMPT_TS else None}
+
+
+def _maybe_enrich_async():
+    """全量同步后后台触发一次板块历史补齐(由 _ENRICH_DAY 保证每交易日一轮)"""
+    qd = _state.get("quote_date") or ""
+    if not qd or _ENRICH_DAY == qd:
+        return
+    t = threading.Thread(target=enrich_sector_history, daemon=True,
+                         name="sector-enrich")
+    t.start()
 
 
 def industry_stats_full():

@@ -256,10 +256,26 @@ def admin_status():
                       "poll_count": st.get("poll_count"),
                       "sample_progress": real_sample.progress(),
                       "sources": src_router.health_status(),
+                      "enrich": real_mkt.enrich_status(),
                       "industry_codes": len(real_mkt.get_industry_cache().get("code2industry", {}))}
     else:
         st["live"] = mock_live.state()
     return st
+
+
+@router.post("/admin/sector-history-enrich")
+def sector_history_enrich():
+    """手动触发“板块历史补齐”: 为样本池覆盖不足的板块补拉近12日日K(后台线程, 每交易日至多一轮)"""
+    if DATA_SOURCE != "real":
+        raise HTTPException(400, "该接口仅实盘(real)模式可用")
+    from ..real import market as real_mkt
+    st = real_mkt.enrich_status()
+    qd = st.get("quote_date")
+    if qd and qd == real_mkt._ENRICH_DAY and real_mkt._ENRICH_LAST not in ("", None):
+        # 当日已跑过一轮, 允许人工重跑(清标记)
+        real_mkt._ENRICH_DAY = ""
+    real_mkt._maybe_enrich_async()
+    return {"ok": True, "triggered": True, "status": real_mkt.enrich_status()}
 
 
 @router.post("/admin/refresh")
