@@ -379,6 +379,65 @@ def _store_refresh(quotes, src, ms, full):
         }
 
 
+def _sector_5d_series():
+    """基于样本池日K(近6个交易日)计算板块: 5日涨幅(%)与连续涨/跌天数。
+    某日板块有效成员<3 视为该日无有效数据(板块样本覆盖不足时返回 None)。"""
+    try:
+        dates = [r["date"] for r in db.query(
+            "SELECT DISTINCT date FROM bars ORDER BY date DESC LIMIT 6")]
+        if len(dates) < 5:
+            return {}
+        lo, hi = dates[-1], dates[0]
+        c2i = get_industry_cache().get("code2industry", {})
+        day_ind = {}
+        for b in db.query("SELECT date, code, pct FROM bars WHERE date BETWEEN ? AND ?",
+                          (lo, hi)):
+            ind = c2i.get(b["code"])
+            if not ind:
+                continue
+            day_ind.setdefault(b["date"], {}).setdefault(ind, []).append(b["pct"])
+        order = sorted(day_ind.keys())
+        avg = {d: {} for d in order}
+        for d in order:
+            for ind, pcts in day_ind[d].items():
+                if len(pcts) >= 3:
+                    avg[d][ind] = sum(pcts) / len(pcts)
+        out = {}
+        for ind in set(x for d in order for x in avg[d]):
+            vals = [avg[d].get(ind) for d in order if avg[d].get(ind) is not None]
+            # 5日累计涨幅(复利近似, 需5日齐全)
+            avg5 = None
+            if len(vals) >= 5:
+                cum = 1.0
+                for v in vals[-5:]:
+                    cum *= 1 + v / 100
+                avg5 = round((cum - 1) * 100, 2)
+            # 连续涨/跌(从最新日回数, 0视为结束)
+            streak_n, streak_dir = 0, None
+            i = len(vals) - 1
+            while i >= 0:
+                v = vals[i]
+                if v is None:
+                    break
+                d = 1 if v > 0 else -1 if v < 0 else 0
+                if d == 0:
+                    break
+                if streak_dir is None:
+                    streak_dir = "up" if d > 0 else "down"
+                if d != (1 if streak_dir == "up" else -1):
+                    break
+                streak_n += 1
+                i -= 1
+            if streak_dir and streak_n:
+                out[ind] = {"avg5_pct": avg5, "streak_n": streak_n, "streak_dir": streak_dir}
+            else:
+                out[ind] = {"avg5_pct": avg5, "streak_n": 0, "streak_dir": None}
+        return out
+    except Exception as e:
+        log.warning("sector 5d series: %s", e)
+        return {}
+
+
 def industry_stats_full():
     """按行业聚合全市场实时(用行业映射), 供大盘板块榜"""
     ind = get_industry_cache()
@@ -407,6 +466,16 @@ def industry_stats_full():
                      "up_ratio": round(d["up"] / n * 100), "zt_5d": None,
                      "is_dragon_sector": False})
     rows.sort(key=lambda r: -r["avg_pct"])
+    # 5日涨幅 & 连续涨跌(样本池日K; 覆盖不足返回—)
+    try:
+        s5 = _sector_5d_series()
+        for r in rows:
+            v = s5.get(r["sector"]) or {}
+            r["avg5_pct"] = v.get("avg5_pct")
+            r["streak_n"] = v.get("streak_n", 0)
+            r["streak_dir"] = v.get("streak_dir")
+    except Exception as e:
+        log.warning("sector 5d merge: %s", e)
     # 量能: 今日板块累计 vs 昨日同时段(分时档案; 首个运行日无档案 → prev=None)
     try:
         amt_map = {r["sector"]: r["amount"] for r in rows}

@@ -396,14 +396,23 @@ function SectorRow({ s, rank, open, busy, err, detail, onToggle, goStock }) {
         <td className="num" style={{ color: (s.zt_today || 0) > 0 ? UP : undefined, fontWeight: (s.zt_today || 0) > 0 ? 700 : 400 }}>
           {s.zt_today ?? '—'}
         </td>
-        <td className="num">{s.zt_5d ?? '—'}</td>
+        <td>{s.avg5_pct != null ? <PctText value={s.avg5_pct} /> : <span className="muted2">—</span>}</td>
+        <td>
+          {s.streak_dir === 'up' && s.streak_n > 0 ? (
+            <span className="up num" style={{ fontWeight: 700 }}>连涨{s.streak_n}日</span>
+          ) : s.streak_dir === 'down' && s.streak_n > 0 ? (
+            <span className="down num" style={{ fontWeight: 700 }}>连跌{s.streak_n}日</span>
+          ) : (
+            <span className="muted2">—</span>
+          )}
+        </td>
         <td className="num">{fmtAmountYi(s.amount)}</td>
         <td><VolCell s={s} /></td>
         <td><span className="caret" style={{ transform: open ? 'rotate(180deg)' : 'none' }}>▾</span></td>
       </tr>
       {open && (
         <tr className="sec-detail-row">
-          <td colSpan={8}>
+          <td colSpan={9}>
             {busy ? (
               <div className="loading" style={{ padding: 14 }}><span className="spin" />加载涨停明细…</div>
             ) : err ? (
@@ -830,19 +839,20 @@ export default function DashboardPage({ route, params, nav, goStock }) {
                 <SortTh label="板块" sortKey="sector" sort={secSort} />
                 <SortTh label="涨跌幅" sortKey="avg_pct" sort={secSort} />
                 <SortTh label="今涨停" sortKey="zt_today" sort={secSort} />
-                <SortTh label="5日涨停" sortKey="zt_5d" sort={secSort} />
+                <SortTh label="5日涨幅" sortKey="avg5_pct" sort={secSort} />
+                <SortTh label="连续涨跌" sortKey="streak_n" sort={secSort} />
                 <SortTh label="成交额" sortKey="amount" sort={secSort} />
                 <SortTh label="量能(较昨同时段)" sortKey="vol_ratio" sort={secSort} />
                 <th />
               </tr>
             </thead>
             {secCount === 0 && (
-              <tbody><tr><td colSpan={8}><Empty text="暂无板块数据" /></td></tr></tbody>
+              <tbody><tr><td colSpan={9}><Empty text="暂无板块数据" /></td></tr></tbody>
             )}
             {secCount > 0 && (
               <>
                 <tbody>
-                  <tr className="dash-sep"><td colSpan={8}>涨幅前 10（资金主攻方向）</td></tr>
+                  <tr className="dash-sep"><td colSpan={9}>涨幅前 10（资金主攻方向）</td></tr>
                   {sortTop10.map((s, idx) => (
                     <SectorRow key={s.sector} s={s} rank={idx + 1} open={ztOpen === s.sector}
                       busy={ztBusy} err={ztErr} detail={ztMap[s.sector]}
@@ -850,7 +860,7 @@ export default function DashboardPage({ route, params, nav, goStock }) {
                   ))}
                 </tbody>
                 <tbody>
-                  <tr className="dash-sep"><td colSpan={8}>跌幅后 10（回避方向）</td></tr>
+                  <tr className="dash-sep"><td colSpan={9}>跌幅后 10（回避方向）</td></tr>
                   {sortBottom10.map((s, idx) => (
                     <SectorRow key={s.sector} s={s} rank={idx + 1} open={ztOpen === s.sector}
                       busy={ztBusy} err={ztErr} detail={ztMap[s.sector]}
