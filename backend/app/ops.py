@@ -62,27 +62,28 @@ def setup():
 
 
 def _in_window():
-    """买卖操作仅限交易日 09:25~14:59（盘前可排单、盘后不自动操作）"""
-    from datetime import datetime as _dt
-    now = _dt.now()
-    if now.weekday() >= 5:
+    """买卖操作仅限交易日 09:25~14:59（北京时间; 盘前可排单、盘后不自动操作）"""
+    from . import cn_time
+    if not cn_time.is_weekday():
         return False
-    hm = now.hour * 100 + now.minute
-    return 925 <= hm <= 1459
+    return cn_time.in_range(925, 1459)
 
 
 def window_info():
+    from . import cn_time
     return {"start": "09:25", "end": "14:59", "open": _in_window(),
-            "weekday": datetime.now().weekday() < 5,
-            "now": datetime.now().strftime("%Y-%m-%d %H:%M")}
+            "weekday": cn_time.is_weekday(),
+            "now": cn_time.now_str("%Y-%m-%d %H:%M")}
 
 
 def _now():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    from . import cn_time
+    return cn_time.now_str()
 
 
 def _today():
-    return datetime.now().strftime("%Y-%m-%d")
+    from . import cn_time
+    return cn_time.today_str()
 
 
 # ---------------------------------------------------------------- 微信推送
@@ -339,11 +340,12 @@ def sweep(view=None, ctx=None):
                     exit_reason = f"{sell.get('signal')}：{sell.get('reason')}"
             if not exit_reason:
                 continue
-            # 持有天数(自然日)
+            # 持有天数(自然日, 北京时间)
             try:
                 ed = datetime.strptime(r["entry_date"] + " " + (r["entry_time"] or "00:00:00"),
                                        "%Y-%m-%d %H:%M:%S")
-                hold = max(1, (datetime.now() - ed).days)
+                from . import cn_time
+                hold = max(1, (cn_time.now() - ed).days)
             except Exception:
                 hold = 1
             pnl = round((price / entry - 1) * 100, 2)
@@ -423,8 +425,9 @@ def sweep(view=None, ctx=None):
         "SELECT id, last_date FROM ops_items WHERE pool='watch' AND status='open'")]
     for r in db.query("SELECT id, last_date FROM ops_items WHERE pool='watch' AND status='open'"):
         try:
+            from . import cn_time
             old = datetime.strptime(r["last_date"], "%Y-%m-%d").date()
-            if (datetime.now().date() - old).days > 5:
+            if (cn_time.today() - old).days > 5:
                 db.execute("UPDATE ops_items SET status='archived', updated_at=? WHERE id=?",
                            (_now(), r["id"]))
         except Exception:

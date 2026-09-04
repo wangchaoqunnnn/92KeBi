@@ -1,0 +1,27 @@
+# 92K 打板决策台 — systemd 守护(云服务器 Linux)
+# 安装: sudo cp deploy/92kebi.service /etc/systemd/system/
+#       sudo systemctl daemon-reload
+#       sudo systemctl enable --now 92kebi
+# 常用: systemctl status 92kebi | journalctl -u 92kebi -f | systemctl restart 92kebi
+[Unit]
+Description=92K 打板决策台(实盘监测/打板入池/微信推送)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 项目绝对路径(按实际部署位置修改)
+WorkingDirectory=/opt/92kebi
+ExecStart=/usr/bin/python3 -X utf8 run.py
+Restart=always
+RestartSec=8
+# 稳健性: 内存/文件句柄保护
+LimitNOFILE=65536
+# 日志(可被 journalctl 捕获; 如需落文件可改用 StandardOutput=append:/var/log/92kebi.log)
+StandardOutput=journal
+StandardError=journal
+# 若服务被 OOM kill 也自动拉起
+OOMPolicy=continue
+
+[Install]
+WantedBy=multi-user.target

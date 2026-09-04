@@ -7,9 +7,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import db
-from .config import DATA_SOURCE
-from .seed.run_seed import seed_market
+from .cn_time import init_process_timezone
+
+init_process_timezone()  # 无论以何种方式启动(uvicorn/python -m/run.py)都按北京时间运行
+
+from . import db  # noqa: E402
+from .config import DATA_SOURCE  # noqa: E402
+from .seed.run_seed import seed_market  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("kb.main")
@@ -106,7 +110,34 @@ app.include_router(r3)
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "data_source": DATA_SOURCE}
+    """云部署健康检查: 进程/时区/调度循环/行情/交易窗口/微信 一键自检"""
+    import os
+    from . import cn_time
+    from .tasks.scheduler import status as sstatus
+    st = sstatus()
+    d = {"ok": True, "data_source": DATA_SOURCE,
+         "cn_time": cn_time.now_str(),
+         "tz_env": os.environ.get("TZ", "") or "(system)",
+         "scheduler": {"running": st.get("running"),
+                       "tasks": st.get("tasks"),
+                       "poll_count": st.get("poll_count"),
+                       "last_poll": st.get("last_poll"),
+                       "last_analysis": st.get("last_analysis"),
+                       "respawns": st.get("respawns")}}
+    if DATA_SOURCE == "real":
+        try:
+            from . import ops
+            from .real import market as real_mkt
+            snap = real_mkt.snapshot()
+            mkt = snap.get("mkt_stats") or {}
+            d["market"] = {"quote_date": snap.get("quote_date"), "state": snap.get("state"),
+                           "zt": mkt.get("zt"), "universe": mkt.get("universe"),
+                           "amount_yi": mkt.get("amount_yi"), "src": snap.get("src")}
+            d["ops_window"] = ops.window_info()
+            d["wechat"] = ops._wechat_status()
+        except Exception as e:  # noqa
+            d["market_error"] = str(e)[:150]
+    return d
 
 
 # ---------------- 前端静态资源(构建产物) ----------------
