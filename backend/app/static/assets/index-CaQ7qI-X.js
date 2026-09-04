@@ -349,6 +349,8 @@ PERFORMANCE OF THIS SOFTWARE.
           white-space:normal; overflow:visible; }
         .ops-long{ white-space:normal; word-break:break-word; line-height:1.65; font-size:12.5px; color:#c6d3ea;
           min-width:190px; max-width:360px; }
+        .tbl td.ops-long{ white-space:normal !important; word-break:break-word !important; vertical-align:top; }
+        .ops-reason-cell{ white-space:normal !important; min-width:220px; max-width:460px; }
         .ops-reason:hover{ color:#e9effc; }
         .ops-more{ display:inline-block; margin-left:4px; font-size:11.5px; color:var(--accent2); cursor:pointer; user-select:none; }
         .ops-more:hover{ text-decoration:underline; }
