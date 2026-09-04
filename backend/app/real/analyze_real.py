@@ -62,6 +62,7 @@ def _load_hist(stocks):
             m = stocks.get(b["code"], {})
             b["name"] = m.get("name", b["code"])
             b["sector"] = m.get("sector") or b.get("sector") or ""
+            b["sector_idx"] = m.get("sector_idx", 0)
             b["float_cap"] = m.get("float_cap") or 0
 
     quote_date = real_mkt.snapshot().get("quote_date") or ""
