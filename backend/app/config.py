@@ -75,4 +75,9 @@ RISK = {
 # 留空则不推送。也可把 webhook 写入 data/wechat_webhook.txt(一行一个, 运行期, 不入git) 或 DB meta 'wechat_webhook'。
 WECHAT_WEBHOOK = os.environ.get("WECHAT_WEBHOOK", "").strip()
 
+# 推送消息里的“点击直达”页面地址(企业微信 markdown 超链接)。
+# 默认打板操作台公网地址; 不同部署可用环境变量 WECHAT_PAGE_URL 覆盖, 留空=纯文本不附加链接。
+WECHAT_PAGE_URL = os.environ.get("WECHAT_PAGE_URL",
+                                  "https://wangchaoqun.top/92kebi/#/ops").strip()
+
 os.makedirs(DATA_DIR, exist_ok=True)
