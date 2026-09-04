@@ -111,13 +111,42 @@ def _ensure_demo_sell():
 
 
 # ---------------------------------------------------------------- 微信推送
+def _hooks():
+    """Webhook 来源: 环境变量 WECHAT_WEBHOOK + 运行期文件 data/wechat_webhook.txt(推荐,不入git) + DB meta"""
+    from .config import WECHAT_WEBHOOK, DATA_DIR
+    import os
+    urls = []
+    if WECHAT_WEBHOOK:
+        urls += [h.strip() for h in WECHAT_WEBHOOK.split(",") if h.strip()]
+    try:
+        f = os.path.join(DATA_DIR, "wechat_webhook.txt")
+        if os.path.exists(f):
+            for line in open(f, encoding="utf-8"):
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    urls.append(line)
+    except Exception:
+        pass
+    try:
+        v = db.meta_get("wechat_webhook")
+        if v:
+            urls += [h.strip() for h in v.split(",") if h.strip()]
+    except Exception:
+        pass
+    seen, out = set(), []
+    for u in urls:
+        if u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
+
+
 def _wechat_push(text):
-    """企业微信群机器人推送(webhook 支持逗号分隔多地址)。未配置则跳过。"""
-    from .config import WECHAT_WEBHOOK
-    hooks = [h.strip() for h in WECHAT_WEBHOOK.split(",") if h.strip()]
+    """企业微信群机器人推送(支持多个webhook)。未配置则跳过。"""
+    hooks = _hooks()
     if not hooks:
-        log.debug("WECHAT_WEBHOOK 未配置, 跳过微信推送")
-        return {"sent": 0, "reason": "未配置 WECHAT_WEBHOOK"}
+        log.debug("微信 Webhook 未配置, 跳过推送")
+        return {"sent": 0, "reason": "未配置微信 Webhook(WECHAT_WEBHOOK 或 data/wechat_webhook.txt)"}
     import json as _j
     import urllib.request as _ur
     body = {"msgtype": "text", "text": {"content": str(text)[:1900]}}
@@ -140,9 +169,7 @@ def wechat_push_test():
 
 
 def _wechat_status():
-    from .config import WECHAT_WEBHOOK
-    hooks = [h for h in WECHAT_WEBHOOK.split(",") if h.strip()]
-    return {"enabled": bool(hooks), "hooks": len(hooks)}
+    return {"enabled": bool(_hooks()), "hooks": len(_hooks())}
 
 
 def _price_for(code, ctx):

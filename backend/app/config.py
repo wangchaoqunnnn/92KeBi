@@ -72,7 +72,7 @@ RISK = {
 }
 
 # 企业微信群机器人 Webhook(可选): 买点入池等事件推送微信。
-# 留空则不推送(可在群机器人添加后填入, 支持多key用逗号分隔)。
+# 留空则不推送。也可把 webhook 写入 data/wechat_webhook.txt(一行一个, 运行期, 不入git) 或 DB meta 'wechat_webhook'。
 WECHAT_WEBHOOK = os.environ.get("WECHAT_WEBHOOK", "").strip()
 
 os.makedirs(DATA_DIR, exist_ok=True)
