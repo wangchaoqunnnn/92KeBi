@@ -1,7 +1,7 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { api } from '../api'
 import { Card, Stat, Tag, Meter, Empty, Loading, ErrorBox, PctText, useTableSort, sortRows, SortTh } from '../components/ui'
-import EChart, { TOOLTIP, axisCommon, AXIS_TEXT } from '../components/EChart'
+import EChart, { TOOLTIP, axisCommon, AXIS_TEXT, GRID_LINE, SPLIT_LINE } from '../components/EChart'
 import { PHASE_META, PHASE_KEYS, UP, DOWN, fmt, fmtPct, fmtAmountYi } from '../format'
 
 const TXT = '#cdd9f0'
@@ -456,6 +456,108 @@ function SectorRow({ s, rank, open, busy, err, detail, onToggle, goStock }) {
 }
 
 /* ================================================================ */
+/* 板块异动看板 option: 上证5分钟(收盘线 + 分时量能柱) + 指数异动时段板块标记 */
+const MV_UP = '#ff5b6b'      // A股涨=红
+const MV_DOWN = '#22c993'    // 跌=绿
+const MV_IDX = '#ffd666'
+const MV_BAR = 'rgba(91,140,255,.55)'
+
+function _ts(d, t) {
+  return new Date(`${d} ${t}:00`).getTime()
+}
+function sectorMoveOption(d) {
+  const buckets = d.buckets || []
+  const moves = d.moves || []
+  const day = d.date
+  const idxData = buckets.map((b) => [_ts(day, b.t), b.close])
+  const barData = buckets.map((b) => [_ts(day, b.t), b.yi])
+  const upMoves = moves.filter((m) => m.dir === 'up').map((m) => ({
+    value: [_ts(day, m.t), m.close], m,
+  }))
+  const downMoves = moves.filter((m) => m.dir !== 'up').map((m) => ({
+    value: [_ts(day, m.t), m.close], m,
+  }))
+  const minT = _ts(day, '09:15')
+  const maxT = _ts(day, '15:00')
+  const fmtMoves = (sectors) => (sectors || [])
+    .map((s) => `${s.sector} ${s.pct > 0 ? '+' : ''}${fmt(s.pct, 2)}% · ${s.delta_yi}亿`)
+    .join('\n')
+  return {
+    backgroundColor: 'transparent',
+    color: [MV_BAR, MV_IDX, MV_UP, MV_DOWN],
+    tooltip: {
+      ...TOOLTIP, trigger: 'item', confine: true,
+      formatter: (p) => {
+        const t = new Date(p.value[0] || p.data[0])
+        const hh = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`
+        if (p.seriesType === 'line') return `<b>${hh}</b><br/>上证指数 ${fmt(p.value[1])}`
+        if (p.seriesType === 'bar') return `<b>${hh}</b><br/>上证5分钟成交额 ${fmt(p.value[1], 1)} 亿`
+        const mm = p.data.m || {}
+        const head = `<b>${hh}</b> 指数${mm.move_pct >= 0 ? '+' : ''}${fmt(mm.move_pct, 2)}%` +
+          (mm.dir === 'up' ? ' <span style="color:#ff5b6b">▲ 带动上涨</span>' : ' <span style="color:#22c993">▼ 拖累下跌</span>')
+        const secs = (mm.sectors || []).map((s) =>
+          `<span style="color:${s.pct > 0 ? '#ff8a92' : '#3edca9'}">${s.sector} ${s.pct > 0 ? '+' : ''}${fmt(s.pct, 2)}%</span> 区间增量 ${s.delta_yi}亿`).join('<br/>')
+        return `${head}<br/>${secs || '—'}`
+      },
+    },
+    legend: {
+      top: 0, right: 8, textStyle: { color: AXIS_TEXT, fontSize: 11 },
+      data: ['上证指数', '带动上涨板块', '拖累下跌板块'],
+    },
+    grid: { left: 52, right: 52, top: 30, bottom: 42 },
+    xAxis: {
+      type: 'time', min: minT, max: maxT,
+      axisLabel: {
+        color: AXIS_TEXT, fontSize: 11,
+        formatter: (v) => {
+          const t = new Date(v)
+          return `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`
+        },
+      },
+      axisLine: { lineStyle: { color: GRID_LINE } },
+      axisTick: { show: false },
+      splitLine: { show: false },
+    },
+    yAxis: [
+      { type: 'value', name: '异动统计·成交额(亿)', nameTextStyle: { color: AXIS_TEXT, fontSize: 11 },
+        axisLabel: { color: AXIS_TEXT, fontSize: 11 }, splitLine: SPLIT_LINE },
+      { type: 'value', name: '上证指数', nameTextStyle: { color: AXIS_TEXT, fontSize: 11 },
+        axisLabel: { color: AXIS_TEXT, fontSize: 11 }, splitLine: { show: false },
+        scale: true, min: 'dataMin' },
+    ],
+    dataZoom: [
+      { type: 'inside', start: 0, end: 100 },
+      { type: 'slider', height: 14, bottom: 8, start: 0, end: 100,
+        borderColor: 'transparent', backgroundColor: 'rgba(255,255,255,.05)',
+        fillerColor: 'rgba(91,140,255,.25)', handleStyle: { color: '#5b8cff' },
+        textStyle: { color: AXIS_TEXT, fontSize: 10 } },
+    ],
+    series: [
+      { name: '异动统计', type: 'bar', yAxisIndex: 0, data: barData, barWidth: '62%',
+        itemStyle: { color: MV_BAR, borderRadius: [2, 2, 0, 0] }, emphasis: { disabled: true } },
+      { name: '上证指数', type: 'line', yAxisIndex: 1, data: idxData, showSymbol: false,
+        smooth: 0.15, lineStyle: { width: 2, color: MV_IDX },
+        itemStyle: { color: MV_IDX },
+        areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+          colorStops: [{ offset: 0, color: 'rgba(255,214,102,.22)' }, { offset: 1, color: 'rgba(255,214,102,0)' }] } } },
+      { name: '带动上涨板块', type: 'scatter', yAxisIndex: 1, data: upMoves,
+        symbol: 'triangle', symbolRotate: 0, symbolSize: 9,
+        itemStyle: { color: MV_UP, borderColor: '#ffd7db', borderWidth: 1 },
+        label: { show: true, position: 'top', color: '#ff8a92', fontSize: 10,
+          formatter: (p) => (p.data.m?.sectors?.[0]?.sector || '').slice(0, 4) },
+        z: 10 },
+      { name: '拖累下跌板块', type: 'scatter', yAxisIndex: 1, data: downMoves,
+        symbol: 'triangle', symbolRotate: 180, symbolSize: 9,
+        itemStyle: { color: MV_DOWN, borderColor: '#bdf3dc', borderWidth: 1 },
+        label: { show: true, position: 'bottom', color: '#3edca9', fontSize: 10,
+          formatter: (p) => (p.data.m?.sectors?.[0]?.sector || '').slice(0, 4) },
+        z: 10 },
+    ],
+    // 竞价/午休区域标注(预留)
+  }
+}
+
+/* ================================================================ */
 export default function DashboardPage({ route, params, nav, goStock }) {
   const [ov, setOv] = useState(null)
   const [err, setErr] = useState(null)
@@ -506,6 +608,31 @@ export default function DashboardPage({ route, params, nav, goStock }) {
   const proOpt = useMemo(() => (hist.length ? profitOption(hist) : null), [hist])
   const plOpt = useMemo(() => (hist.length ? phaseLadderOption(hist) : null), [hist])
   const secSort = useTableSort('avg_pct')
+
+  /* 板块异动看板(上证5分钟) */
+  const [mv, setMv] = useState(null)
+  const [mvDate, setMvDate] = useState('')
+  const mvDateRef = useRef('')
+  const loadMv = useCallback((d) => {
+    api.sectorMove(d)
+      .then((r) => {
+        if (!r || !r.buckets) { setMv(null); return }
+        setMv(r)
+        if (!d && r.date) { setMvDate(r.date); mvDateRef.current = r.date }
+      })
+      .catch(() => { /* 盘中数据未就绪时静默 */ })
+  }, [])
+  useEffect(() => {
+    loadMv('')
+    const t = setInterval(() => loadMv(mvDateRef.current), 45000)
+    return () => clearInterval(t)
+  }, [loadMv])
+  const pickMvDate = (v) => {
+    setMvDate(v); mvDateRef.current = v
+    if (v) loadMv(v)
+  }
+  const mvOpt = useMemo(() => (mv && mv.buckets && mv.buckets.length ? sectorMoveOption(mv) : null),
+    [mv])
 
   if (err && !ov) {
     return (
@@ -820,6 +947,34 @@ export default function DashboardPage({ route, params, nav, goStock }) {
           )}
         </Card>
       )}
+
+      {/* 3.5) 板块异动看板 */}
+      <Card
+        title={`板块异动 · 上证指数 9:15–15:00`}
+        extra={
+          <span style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            {mv && mv.days && mv.days.length > 1 && (
+              <select className="input" style={{ width: 140, padding: '2px 6px' }} value={mvDate || mv.date || ''} onChange={(e) => pickMvDate(e.target.value)}>
+                {mv.days.map((d0) => (
+                  <option key={d0} value={d0}>{d0}</option>
+                ))}
+              </select>
+            )}
+            <span className="muted">红▲带动上涨 · 绿▼拖累下跌 · 柱=上证5分钟成交额(亿)</span>
+          </span>
+        }
+      >
+        {mvOpt ? (
+          <>
+            <EChart option={mvOpt} height={320} />
+            <div className="muted small" style={{ marginTop: 6 }}>
+              口径：指数=上证5分钟K(新浪真实分时)；成交额=每5分钟上证成交额(亿元)；板块标记=该时段成交额增量居前且当日方向与指数异动一致的板块（需盘中分时档案，盘后仍可回看）。
+            </div>
+          </>
+        ) : (
+          <Empty text={mv ? '暂无该日分时数据' : '分时档案积累中：开盘后自动生成 上证5分钟 与 板块异动标记'} />
+        )}
+      </Card>
 
       {/* 4) 板块强弱 */}
       <div className="grid-28">

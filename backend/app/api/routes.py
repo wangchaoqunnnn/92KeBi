@@ -170,6 +170,18 @@ def dashboard_sectors():
     return {"date": v["date"], "rows": _sector_rows(v)}
 
 
+@router.get("/dashboard/sector-move")
+def dashboard_sector_move(date: str = Query("", max_length=10)):
+    """板块异动看板(real): 上证5分钟K(收盘线+分时量能) + 板块分时档案归桶 → 指数异动时段标记板块"""
+    if DATA_SOURCE != "real":
+        return {"ok": False, "reason": "板块异动看板仅实盘(real)模式提供"}
+    from ..real import intraday
+    res = intraday.sector_move_board(date.strip() or None)
+    if not res:
+        return {"ok": False, "reason": "暂无上证指数5分钟分时数据(开盘后自动生成)"}
+    return res
+
+
 def _sector_rows(v):
     """板块聚合视图（含龙头锚点）"""
     if DATA_SOURCE == "real":

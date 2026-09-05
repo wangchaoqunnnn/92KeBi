@@ -35,6 +35,7 @@ export const api = {
 
   overview: () => req('/api/dashboard/overview'),
   sectors: () => req('/api/dashboard/sectors'),
+  sectorMove: (date = '') => req(`/api/dashboard/sector-move${date ? `?date=${date}` : ''}`),
   history: (days = 40) => req(`/api/dashboard/history?days=${days}`),
 
   leaders: () => req('/api/leaders'),
