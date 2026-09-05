@@ -59,7 +59,9 @@ export default function OpsPage({ route, params, nav, goStock }) {
     }), `已删除 ${row.name} 的卖出记录`)
   }
   const removeBuy = (row) => {
-    if (!window.confirm(`确认移除 ${row.name}（${row.code}）？将删除该持仓对应的数据行，不可恢复。`)) return
+    // 二次确认: 第一段确认意图, 第二段确认永久删除(不可恢复)
+    if (!window.confirm(`确认要移除 ${row.name}（${row.code}）吗？\n将删除该持仓对应的数据行。`)) return
+    if (!window.confirm(`再次确认：此操作会永久删除「${row.name}（${row.code}）」这条记录，删除后不可恢复，并将推送微信群通知。\n确定删除？`)) return
     act(() => api.opsRemoveBuy(row.id).then((r) => {
       if (!r.ok) throw new Error(r.error || '移除失败')
       if (r.push && r.push.sent === 0) throw new Error(`已移除 ${row.name}，但微信推送失败：${(r.push.reason || '未知').slice(0, 120)}`)
