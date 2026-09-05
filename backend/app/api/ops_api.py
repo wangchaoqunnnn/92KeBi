@@ -42,6 +42,12 @@ def ops_delete(item_id: int = Query(...)):
     return ops.delete_sell(item_id)
 
 
+@router.post("/remove-buy")
+def ops_remove_buy(item_id: int = Query(...)):
+    """移除买入池持仓(直接删除该数据行)"""
+    return ops.remove_buy(item_id)
+
+
 @router.post("/push-test")
 def ops_push_test():
     """微信推送连通性测试(需配置 WECHAT_WEBHOOK 环境变量)"""

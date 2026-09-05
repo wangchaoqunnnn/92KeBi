@@ -46,17 +46,19 @@ export default function OpsPage({ route, params, nav, goStock }) {
       setBusy(false)
     }
   }
-  const manualSell = (c) =>
-    act(() => api.opsManualSell(c).then((r) => {
-      if (!r.ok) throw new Error(r.error || '无持仓')
-      if (r.push && r.push.sent === 0) throw new Error(`已了结 ${c}，但微信推送失败：${(r.push.reason || '未知').slice(0, 120)}`)
-    }), `已按现价了结 ${c}`)
   const delSell = (row) => {
     if (!window.confirm(`确认删除卖出池记录：${row.name}（${row.code}）？删除后不可恢复。`)) return
     act(() => api.opsDelete(row.id).then((r) => {
       if (!r.ok) throw new Error(r.error || '删除失败')
       if (r.push && r.push.sent === 0) throw new Error(`已删除 ${row.name}，但微信推送失败：${(r.push.reason || '未知').slice(0, 120)}`)
     }), `已删除 ${row.name} 的卖出记录`)
+  }
+  const removeBuy = (row) => {
+    if (!window.confirm(`确认移除 ${row.name}（${row.code}）？将删除该持仓对应的数据行，不可恢复。`)) return
+    act(() => api.opsRemoveBuy(row.id).then((r) => {
+      if (!r.ok) throw new Error(r.error || '移除失败')
+      if (r.push && r.push.sent === 0) throw new Error(`已移除 ${row.name}，但微信推送失败：${(r.push.reason || '未知').slice(0, 120)}`)
+    }), `已移除买入池持仓：${row.name}`)
   }
   const ignore = (pool, c) =>
     act(() => api.opsIgnore(pool, c).then((r) => {
@@ -186,10 +188,7 @@ export default function OpsPage({ route, params, nav, goStock }) {
                         <td>
                           <div className="ops-act">
                             <button className="btn btn-sm" onClick={() => goStock(r.code)}>查看</button>
-                            <button className="btn btn-sm btn-danger" onClick={() => manualSell(r.code)} title={tradeOpen ? '按当前价了结并结算' : '仅 09:25–14:59 交易时段可买卖'} disabled={!tradeOpen}>
-                              {tradeOpen ? '了结' : '暂停'}
-                            </button>
-                            <button className="btn btn-sm btn-ghost" onClick={() => ignore('buy', r.code)}>忽略</button>
+                            <button className="btn btn-sm btn-danger" title="删除该持仓对应的数据行(不可恢复)，并推送微信群" onClick={() => removeBuy(r)}>移除</button>
                           </div>
                         </td>
                       </tr>

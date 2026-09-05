@@ -652,3 +652,27 @@ def delete_sell(item_id):
         log.warning("wechat delete push: %s", e)
         push = {"sent": 0, "reason": str(e)[:120]}
     return {"ok": True, "deleted": 1, "name": row["name"], "push": push}
+
+
+def remove_buy(item_id):
+    """移除买入池持仓: 直接把该条数据行从表里删除(区别于忽略/归档), 并推送微信群"""
+    setup()
+    row = db.query_one("SELECT * FROM ops_items WHERE id=?", (item_id,))
+    if not row:
+        return {"ok": False, "error": "记录不存在"}
+    if row["pool"] != "buy":
+        return {"ok": False, "error": "仅买入池持仓可移除(卖出池请用删除)"}
+    db.execute("DELETE FROM ops_items WHERE id=?", (item_id,))
+    log.info("ops remove buy id=%s name=%s", item_id, row["name"])
+    try:
+        msg = (f"【92K 打板·买入池·持仓】移除（删除数据行）\n"
+               f"{row.get('name') or row.get('code')}（{row.get('code')}）{row.get('sector') or ''}\n"
+               f"买入：{row.get('entry_date') or '—'} {row.get('entry_time') or ''} "
+               f"@ {_fmt_num(row.get('entry_price'))}\n"
+               f"信号：{row.get('signal') or row.get('strategy') or '—'}\n"
+               f"说明：该持仓已从买入池移除删除（id={item_id}）")
+        push = _notify(msg)
+    except Exception as e:  # noqa
+        log.warning("wechat remove buy push: %s", e)
+        push = {"sent": 0, "reason": str(e)[:120]}
+    return {"ok": True, "removed": 1, "name": row["name"], "push": push}
