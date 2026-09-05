@@ -1,8 +1,8 @@
 """公开访问地址推导（用于微信推送里的“点击直达”链接）。
-原则：代码里不写死任何绝对地址。
-- 优先取环境变量 WECHAT_PAGE_URL（部署时按域名填写, 最确定）;
-- 否则由最近一次 HTTP 访问的来源动态推导: scheme://host + 反代前缀(X-Forwarded-Prefix, 子路径部署时由 nginx 提供) + #/ops。
-这样无论部署在 根路径/子路径/任意域名, 推送链接都跟用户实际访问地址一致。
+优先级:
+1) 环境变量 WECHAT_PAGE_URL(若显式设置) ;
+2) 默认打板操作台地址 https://wangchaoqun.top/92kebi/#/ops (config 内默认值);
+3) 仅当以上为空时才按最近一次访问来源动态推导(scheme://host + X-Forwarded-Prefix + #/ops)。
 """
 import threading
 

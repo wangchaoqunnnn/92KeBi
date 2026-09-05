@@ -75,9 +75,10 @@ RISK = {
 # 留空则不推送。也可把 webhook 写入 data/wechat_webhook.txt(一行一个, 运行期, 不入git) 或 DB meta 'wechat_webhook'。
 WECHAT_WEBHOOK = os.environ.get("WECHAT_WEBHOOK", "").strip()
 
-# 推送消息“点击直达”页面地址。代码不写死绝对地址:
-# 留空 = 由系统按最近一次访问来源自动推导(scheme://host + 反代前缀 + #/ops);
-# 也可部署时用环境变量 WECHAT_PAGE_URL 指定(例: https://你的域名/92kebi/#/ops)。
-WECHAT_PAGE_URL = os.environ.get("WECHAT_PAGE_URL", "").strip()
+# 推送消息“点击直达”的页面地址(生产公网地址):
+# 默认 = 打板操作台 https://wangchaoqun.top/92kebi/#/ops;
+# 若换域名/子路径, 用环境变量 WECHAT_PAGE_URL 覆盖(留空=使用默认地址)。
+WECHAT_PAGE_URL = (os.environ.get("WECHAT_PAGE_URL", "").strip()
+                   or "https://wangchaoqun.top/92kebi/#/ops")
 
 os.makedirs(DATA_DIR, exist_ok=True)
