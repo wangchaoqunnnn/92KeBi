@@ -10,9 +10,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# 项目绝对路径(按实际部署位置修改)
-WorkingDirectory=/opt/92kebi
-ExecStart=/usr/bin/python3 -X utf8 run.py
+# 项目绝对路径(按实际部署位置修改, 示例=/root/92KeBi)
+WorkingDirectory=/root/92KeBi
+ExecStart=/root/92KeBi/.venv/bin/python3 -X utf8 run.py
 Restart=always
 RestartSec=8
 # 稳健性: 内存/文件句柄保护

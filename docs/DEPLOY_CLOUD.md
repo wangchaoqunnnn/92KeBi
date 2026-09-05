@@ -29,10 +29,9 @@ systemd(92kebi.service, Restart=always)
 
 ## 三、部署步骤
 ```bash
-# 1. 取代码
+# 1. 取代码(本机示例部署目录为 /root/92KeBi; 换成你自己的绝对路径即可)
 sudo apt update && sudo apt install -y python3 python3-venv python3-pip git
-sudo mkdir -p /opt && sudo chown $USER /opt
-cd /opt
+cd /root
 git clone git@github.com:wangchaoqunnnn/92KeBi.git   # 或用 HTTPS 免密
 cd 92KeBi
 
@@ -61,7 +60,9 @@ nano data/wechat_webhook.txt
 
 # 5. 注册 systemd 守护(开机自启 + 崩溃自启)
 sudo cp deploy/92kebi.service /etc/systemd/system/
-sudo sed -i 's#WorkingDirectory=/opt/92kebi#WorkingDirectory=/opt/92KeBi#; s#ExecStart=/usr/bin/python3#ExecStart=/opt/92KeBi/.venv/bin/python3#' /etc/systemd/system/92kebi.service
+# 注意: 92kebi.service 内 WorkingDirectory/ExecStart 已按 /root/92KeBi 写好;
+# 若实际路径不同, 用下面 sed 一键替换(把 /root/92KeBi 换成你的绝对路径):
+sudo sed -i 's#/root/92KeBi#你的绝对路径#g' /etc/systemd/system/92kebi.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now 92kebi
 systemctl status 92kebi
@@ -111,8 +112,8 @@ journalctl -u 92kebi -f --no-hostname
 ## 七、备份与恢复
 ```bash
 # 数据全在 data/ 目录(sqlite + 分时档案 + 行业缓存), 定时打包即可
-tar -czf 92kebi_data_$(date +%F).tgz /opt/92KeBi/data
-# 恢复: 解压回 /opt/92KeBi/data 后 systemctl restart 92kebi
+tar -czf 92kebi_data_$(date +%F).tgz /root/92KeBi/data
+# 恢复: 解压回 /root/92KeBi/data 后 systemctl restart 92kebi
 ```
 注意：`data/wechat_webhook.txt` 属敏感配置，备份包注意保密，勿提交 git。
 
