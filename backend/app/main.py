@@ -26,6 +26,11 @@ async def lifespan(app: FastAPI):
     # 1) 数据层初始化
     db.init_db()
     mode = DATA_SOURCE
+    if mode != "real":
+        log.warning("⚠ 当前为 mock 模拟模式(DATA_SOURCE=%.60s, 环境变量原始值=%r)。"
+                    "实盘接口(/api/market/sector-zt 等)不可用; 生产部署请确保 .env/systemd 中 "
+                    "DATA_SOURCE=real 后重启。", os.environ.get("DATA_SOURCE", ""),
+                    os.environ.get("DATA_SOURCE", ""))
     if mode == "real":
         await _init_real()
     else:
@@ -131,6 +136,7 @@ def health():
     st = sstatus()
     from . import pub_url
     d = {"ok": True, "data_source": DATA_SOURCE,
+         "data_source_env": os.environ.get("DATA_SOURCE", ""),   # 环境变量原始值(定位 mock 来源)
          "cn_time": cn_time.now_str(),
          "tz_env": os.environ.get("TZ", "") or "(system)",
          "push_page_url": pub_url.ops_page_url(),
