@@ -126,6 +126,23 @@ def _save_zt_prev(codes, d):
     db.meta_set("real_zt_prev", json.dumps({"codes": codes, "date": d}, ensure_ascii=False))
 
 
+def _zt_prev_from_bars(qd):
+    """昨日涨停回退: 取距 qd 最近的、历史K线里有涨停记录(limit_up=1)的交易日,
+    返回该日涨停股代码列表。保证跨日翻转缺失/进程重启/周末后也能算“昨涨停今表现”。
+    口径: 样本池(成交额前N)内的涨停股。"""
+    try:
+        dates = db.query("SELECT DISTINCT date FROM bars WHERE date<? AND limit_up=1 "
+                         "ORDER BY date DESC LIMIT 3", (qd,))
+        if not dates:
+            return []
+        d0 = dates[0]["date"]
+        rows = db.query("SELECT code FROM bars WHERE date=? AND limit_up=1", (d0,))
+        return [r["code"] for r in rows]
+    except Exception as e:
+        log.warning("zt prev from bars: %s", e)
+        return []
+
+
 def _ladder_for_zt(zt_rows):
     """当日涨停股倒推连板数(基于日K, 新浪主/腾讯备)"""
     if not zt_rows:
@@ -325,7 +342,11 @@ def _store_refresh(quotes, src, ms, full):
             _state["yesterday_zt"] = [x["code"] for x in _state["today_zt"]]
         elif not _state.get("yesterday_zt"):
             yzt, yd = _load_zt_prev()
-            _state["yesterday_zt"] = yzt if yd == quote_date else []
+            if yzt and yd == quote_date:
+                _state["yesterday_zt"] = yzt
+            else:
+                # 跨日翻转缺失/进程重启时: 从历史日K按上一交易日涨停行回退(真实口径)
+                _state["yesterday_zt"] = _zt_prev_from_bars(quote_date)
 
         # 连板(仅当日涨停股; 日期变更重算, 同日增量补拉新封板股)
         if _state.get("ladder_date") != quote_date:

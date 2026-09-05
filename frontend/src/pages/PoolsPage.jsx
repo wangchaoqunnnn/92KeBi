@@ -226,6 +226,23 @@ export default function PoolsPage({ route, params, nav, goStock }) {
     return () => clearInterval(t)
   }, [load])
 
+  /* 支持 #/pools?tab=buyang|qiehuan 从仪表盘直达对应候选池并高亮 */
+  const tab = (params && params.get('tab')) || ''
+  useEffect(() => {
+    if (!tab || !data) return
+    const el = document.getElementById(tab === 'qiehuan' ? 'pool-qiehuan' : 'pool-buyang')
+    if (!el) return
+    const t1 = setTimeout(() => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      el.style.transition = 'outline-color .2s'
+      el.style.outline = '2px solid rgba(122,169,255,.85)'
+      el.style.outlineOffset = '4px'
+      setTimeout(() => { el.style.outline = 'none' }, 1800)
+    }, 250)
+    return () => clearTimeout(t1)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, tab])
+
   const onToggle = useCallback((kind, code) => {
     setOpenMap((m) => {
       const key = `${kind}:${code}`
@@ -268,22 +285,26 @@ export default function PoolsPage({ route, params, nav, goStock }) {
       </div>
 
       <div className="grid2">
-        <PoolCard
-          kind="buyang"
-          pool={data.buyang}
-          openMap={openMap}
-          onToggle={onToggle}
-          nav={nav}
-          goStock={goStock}
-        />
-        <PoolCard
-          kind="qiehuan"
-          pool={data.qiehuan}
-          openMap={openMap}
-          onToggle={onToggle}
-          nav={nav}
-          goStock={goStock}
-        />
+        <div id="pool-buyang">
+          <PoolCard
+            kind="buyang"
+            pool={data.buyang}
+            openMap={openMap}
+            onToggle={onToggle}
+            nav={nav}
+            goStock={goStock}
+          />
+        </div>
+        <div id="pool-qiehuan">
+          <PoolCard
+            kind="qiehuan"
+            pool={data.qiehuan}
+            openMap={openMap}
+            onToggle={onToggle}
+            nav={nav}
+            goStock={goStock}
+          />
+        </div>
       </div>
 
       <p className="muted small" style={{ margin: 0 }}>

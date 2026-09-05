@@ -747,6 +747,9 @@ export default function DashboardPage({ route, params, nav, goStock }) {
         .dash-pool-box{ background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.07); border-radius:10px; padding:10px 14px; }
         .dash-pool-box .lbl{ color:#8fa3c0; font-size:12px; }
         .dash-pool-box .val{ font-size:26px; font-weight:800; font-variant-numeric:tabular-nums; }
+        .dash-pool-box.dash-pool-link{ width:100%; text-align:left; font-family:inherit; cursor:pointer; transition:border-color .15s, background .15s; }
+        .dash-pool-box.dash-pool-link:hover{ background:rgba(122,169,255,.09); border-color:rgba(122,169,255,.5); }
+        .dash-pool-box.dash-pool-link .lbl{ color:#7aa9ff; }
         .dash-sig-row{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
 
         /* 风控纪律条 */
@@ -889,13 +892,6 @@ export default function DashboardPage({ route, params, nav, goStock }) {
           </div>
           <div className="stat-sub">市场均值 {fmtPct(stats.mean_pct)}</div>
         </Card>
-        <Card>
-          <div className="stat-label">昨日涨停今表现</div>
-          <div className="stat-value" style={{ fontSize: 26, marginTop: 2 }}>
-            {stats.premium_end == null ? <span className="flat">—</span> : <span className={Number(stats.premium_end) > 0 ? 'up' : 'down'}>{fmtPct(stats.premium_end)}</span>}
-          </div>
-          <div className="stat-sub">{stats.premium_end == null ? '无样本（昨日无涨停）' : '昨日涨停股今日平均收盘表现'}</div>
-        </Card>
         <Card><Stat label="炸板率" value={`${fmt(stats.explosion, 1)}%`} big sub="炸板数 / 曾涨停数" /></Card>
         <Card><Stat label="两市成交额" value={fmtAmountYi(stats.amount_sum)} big sub="全市场成交（亿）" /></Card>
         <Card>
@@ -915,6 +911,13 @@ export default function DashboardPage({ route, params, nav, goStock }) {
               ? `较昨 ${volDiff >= 0 ? '多' : '少'} ${Math.abs(volDiff).toFixed(0)}亿（${vol.basis}）`
               : vol ? '对比数据计算中…' : '分时档案积累中，次日自动可对比'}
           </div>
+        </Card>
+        <Card>
+          <div className="stat-label">昨日涨停今表现</div>
+          <div className="stat-value" style={{ fontSize: 26, marginTop: 2 }}>
+            {stats.premium_end == null ? <span className="flat">—</span> : <span className={Number(stats.premium_end) > 0 ? 'up' : 'down'}>{fmtPct(stats.premium_end)}</span>}
+          </div>
+          <div className="stat-sub">{stats.premium_end == null ? '前一日无涨停或样本未覆盖' : '昨日涨停股今日平均收盘表现'}</div>
         </Card>
         <Card><Stat label="昨日涨停今高开" value={stats.premium_open == null ? '—' : `${fmt(stats.premium_open, 2)}%`} sub="开盘溢价参考" /></Card>
       </div>
@@ -1082,14 +1085,24 @@ export default function DashboardPage({ route, params, nav, goStock }) {
           {/* 股票池状态 */}
           <Card title="股票池 & 信号状态">
             <div className="dash-pools">
-              <div className="dash-pool-box">
-                <div className="lbl">补涨池 buyang</div>
-                <div className="val up">{pools.buyang ?? '—'}</div>
-              </div>
-              <div className="dash-pool-box">
-                <div className="lbl">切换池 qiehuan</div>
-                <div className="val" style={{ color: '#cdd9f0' }}>{pools.qiehuan ?? '—'}</div>
-              </div>
+              <button
+                type="button"
+                className="dash-pool-box dash-pool-link"
+                onClick={() => nav('/pools?tab=buyang')}
+                title="点击跳转 股票池 → 补涨候选池"
+              >
+                <span className="lbl">补涨池 buyang ›</span>
+                <span className="val up">{pools.buyang ?? '—'}</span>
+              </button>
+              <button
+                type="button"
+                className="dash-pool-box dash-pool-link"
+                onClick={() => nav('/pools?tab=qiehuan')}
+                title="点击跳转 股票池 → 切换候选池"
+              >
+                <span className="lbl">切换池 qiehuan ›</span>
+                <span className="val" style={{ color: '#cdd9f0' }}>{pools.qiehuan ?? '—'}</span>
+              </button>
             </div>
             <div className="dash-sig-row">
               <Tag tone="buy">买入 {sigs.buy ?? 0}</Tag>
