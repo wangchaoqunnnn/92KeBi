@@ -128,16 +128,23 @@ def _clip_bytes(s, limit):
 def _wechat_push(text, page_url=None):
     """企业微信群机器人推送(支持多个webhook)。未配置则跳过。
     以企业微信响应体 errcode==0 为唯一成功判据(HTTP 200 不等于送达, 失败会带 errcode)。
-    配置了 WECHAT_PAGE_URL(默认打板操作台公网地址)时改为 markdown 消息,
-    末尾附“点击打开打板操作台”超链接, 群成员点一下即直达。"""
-    from .config import WECHAT_PAGE_URL as _CFG_PAGE
+    附加“点击打开打板操作台”链接时, 地址不写死: page_url 参数 > 环境变量 WECHAT_PAGE_URL
+    > 按最近一次访问来源动态推导(pub_url)。都取不到则发纯文本。"""
     hooks = _hooks()
     if not hooks:
         log.debug("微信 Webhook 未配置, 跳过推送")
         return {"sent": 0, "reason": "未配置微信 Webhook(WECHAT_WEBHOOK 或 data/wechat_webhook.txt)"}
     import json as _j
     import urllib.request as _ur
-    url = (page_url or _CFG_PAGE or "").strip()
+    url = ""
+    if page_url:
+        url = page_url.strip()
+    if not url:
+        try:
+            from . import pub_url
+            url = pub_url.ops_page_url()
+        except Exception:
+            url = ""
     txt = str(text).strip()
     if url:
         # markdown 消息: 正文 + 可点击链接(markdown 才支持群内点击打开网页)
@@ -171,8 +178,7 @@ def _wechat_push(text, page_url=None):
 
 
 def wechat_push_test():
-    return _wechat_push("【92K 打板·测试】微信推送已接通 ✅\n时间 " + _now()
-                        + "\n点击下方链接可直达打板操作台")
+    return _wechat_push("【92K 打板·测试】微信推送已接通 ✅\n时间 " + _now())
 
 
 def _fmt_num(v, nd=2):

@@ -50,7 +50,10 @@ nano data/wechat_webhook.txt
 # (可选)环境变量(不设置即走默认 real + 8720):
 #    cp .env.example .env  并在其中按需修改 REAL_POLL_SECONDS / REAL_CRAWL_N 等
 #     KB_HOST 保持 127.0.0.1, 对外走 nginx; 也可改 0.0.0.0 直开端口
-#    WECHAT_PAGE_URL=https://你的域名/92kebi/#/ops   ← 推送消息“点击直达”地址(默认已指向 wangchaoqun.top, 域名变化时用此覆盖)
+#    WECHAT_PAGE_URL=https://你的域名/92kebi/#/ops
+#       ← 推送消息“点击直达”地址。代码不写死绝对地址: 留空=自动按用户访问来源推导
+#         (子路径部署时 nginx 已回传 X-Forwarded-Prefix, 无需此变量);
+#         如无 nginx 直连或想固定, 才用此环境变量显式指定。
 
 # 4. 首次启动验证(会做首轮行情同步; 首次日K回填约 2~5 分钟)
 .venv/bin/python -X utf8 run.py

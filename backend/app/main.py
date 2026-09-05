@@ -100,6 +100,20 @@ app.add_middleware(
     allow_methods=["*"], allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def _capture_pub_origin(request, call_next):
+    """记录用户实际访问的 协议/主机/子路径(用于微信推送“点击直达”链接动态推导, 代码无绝对地址)"""
+    try:
+        from . import pub_url
+        h = request.headers
+        pub_url.capture(request.url.scheme, h.get("host") or "",
+                        h.get("x-forwarded-proto"), h.get("x-forwarded-prefix"))
+    except Exception:  # noqa
+        pass
+    return await call_next(request)
+
+
 from .api.routes import router as r1   # noqa: E402
 from .api.extra import router as r2    # noqa: E402
 from .api.ops_api import router as r3  # noqa: E402
@@ -115,9 +129,11 @@ def health():
     from . import cn_time
     from .tasks.scheduler import status as sstatus
     st = sstatus()
+    from . import pub_url
     d = {"ok": True, "data_source": DATA_SOURCE,
          "cn_time": cn_time.now_str(),
          "tz_env": os.environ.get("TZ", "") or "(system)",
+         "push_page_url": pub_url.ops_page_url(),
          "scheduler": {"running": st.get("running"),
                        "tasks": st.get("tasks"),
                        "poll_count": st.get("poll_count"),
