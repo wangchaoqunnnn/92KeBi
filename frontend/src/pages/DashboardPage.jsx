@@ -494,9 +494,9 @@ function sectorMoveOption(d) {
         if (p.seriesType === 'bar') return `<b>${hh}</b><br/>上证5分钟成交额 ${fmt(p.value[1], 1)} 亿`
         const mm = p.data.m || {}
         const head = `<b>${hh}</b> 指数${mm.move_pct >= 0 ? '+' : ''}${fmt(mm.move_pct, 2)}%` +
-          (mm.dir === 'up' ? ' <span style="color:#ff5b6b">▲ 带动上涨</span>' : ' <span style="color:#22c993">▼ 拖累下跌</span>')
+          (mm.dir === 'up' ? ' <span style="color:#ff5b6b">▲ 上涨推动</span>' : ' <span style="color:#22c993">▼ 下跌拖累</span>')
         const secs = (mm.sectors || []).map((s) =>
-          `<span style="color:${s.pct > 0 ? '#ff8a92' : '#3edca9'}">${s.sector} ${s.pct > 0 ? '+' : ''}${fmt(s.pct, 2)}%</span> 区间增量 ${s.delta_yi}亿`).join('<br/>')
+          `<span style="color:${s.pct > 0 ? '#ff8a92' : '#3edca9'}">${s.sector}</span> 贡献 ${s.pct > 0 ? '+' : ''}${fmt(s.pct, 3)}% · 区间成交 ${s.amt_yi}亿`).join('<br/>')
         return `${head}<br/>${secs || '—'}`
       },
     },
@@ -747,9 +747,22 @@ export default function DashboardPage({ route, params, nav, goStock }) {
         .dash-pool-box{ background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.07); border-radius:10px; padding:10px 14px; }
         .dash-pool-box .lbl{ color:#8fa3c0; font-size:12px; }
         .dash-pool-box .val{ font-size:26px; font-weight:800; font-variant-numeric:tabular-nums; }
-        .dash-pool-box.dash-pool-link{ width:100%; text-align:left; font-family:inherit; cursor:pointer; transition:border-color .15s, background .15s; }
-        .dash-pool-box.dash-pool-link:hover{ background:rgba(122,169,255,.09); border-color:rgba(122,169,255,.5); }
-        .dash-pool-box.dash-pool-link .lbl{ color:#7aa9ff; }
+        .dash-pool-box.dash-pool-link{ width:100%; text-align:left; font-family:inherit; cursor:pointer; display:flex; flex-direction:column; gap:4px;
+          transition:border-color .15s, background .15s, transform .15s, box-shadow .15s; }
+        .dash-pool-box.dash-pool-link:hover{ background:rgba(122,169,255,.09); border-color:rgba(122,169,255,.5);
+          transform:translateY(-1px); box-shadow:0 6px 18px rgba(122,169,255,.12); }
+        .dash-pool-box .pool-head{ display:flex; align-items:center; gap:7px; }
+        .dash-pool-box .pool-head .lbl{ font-size:13px; letter-spacing:.2px; }
+        .dash-pool-box .pool-head .lbl em{ font-style:normal; color:#5f7598; font-size:10.5px; margin-left:3px; }
+        .dash-pool-box .pool-dot{ width:7px; height:7px; border-radius:50%; box-shadow:0 0 8px currentColor; }
+        .dash-pool-box .pool-dot.up{ background:var(--up,#ff4d5a); color:#ff4d5a; }
+        .dash-pool-box .pool-dot.qh{ background:#7aa9ff; color:#7aa9ff; }
+        .dash-pool-box .pool-ic{ margin-left:auto; width:22px; height:22px; border-radius:50%; display:grid; place-items:center;
+          color:#9db4d9; background:rgba(255,255,255,.06); transition:transform .18s, background .18s, color .18s; }
+        .dash-pool-box.dash-pool-link:hover .pool-ic{ transform:translateX(2px); background:rgba(122,169,255,.25); color:#dce9ff; }
+        .dash-pool-box .pool-count{ display:flex; align-items:baseline; gap:6px; }
+        .dash-pool-box .pool-count b{ font-size:24px; font-weight:800; font-variant-numeric:tabular-nums; }
+        .dash-pool-box .pool-count i{ font-style:normal; color:#5f7598; font-size:11px; }
         .dash-sig-row{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
 
         /* 风控纪律条 */
@@ -971,11 +984,11 @@ export default function DashboardPage({ route, params, nav, goStock }) {
           <>
             <EChart option={mvOpt} height={320} />
             <div className="muted small" style={{ marginTop: 6 }}>
-              口径：指数=上证5分钟K(新浪真实分时)；成交额=每5分钟上证成交额(亿元)；板块标记=该时段成交额增量居前且当日方向与指数异动一致的板块（需盘中分时档案，盘后仍可回看）。
+              指数=上证5分钟K(新浪真实)；柱=每5分钟上证成交额(亿)；板块标记=该时段拉动/拖累上证指数的具体板块，红▲=上涨推动、绿▼=下跌拖累（沪市成交额居前80只 × 市值权重估算贡献%，悬停看明细）
             </div>
           </>
         ) : (
-          <Empty text={mv ? '暂无该日分时数据' : '分时档案积累中：开盘后自动生成 上证5分钟 与 板块异动标记'} />
+          <Empty text={mv ? '暂无该日分时数据' : '分时数据生成中：开盘后自动累积 上证5分钟与板块归因'} />
         )}
       </Card>
 
@@ -1091,8 +1104,14 @@ export default function DashboardPage({ route, params, nav, goStock }) {
                 onClick={() => nav('/pools?tab=buyang')}
                 title="点击跳转 股票池 → 补涨候选池"
               >
-                <span className="lbl">补涨池 buyang ›</span>
-                <span className="val up">{pools.buyang ?? '—'}</span>
+                <span className="pool-head">
+                  <span className="pool-dot up" />
+                  <span className="lbl">补涨池 <em>buyang</em></span>
+                  <span className="pool-ic">
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M9 5l7 7-7 7" /></svg>
+                  </span>
+                </span>
+                <span className="pool-count"><b className="up">{pools.buyang ?? '—'}</b><i>只候选</i></span>
               </button>
               <button
                 type="button"
@@ -1100,8 +1119,14 @@ export default function DashboardPage({ route, params, nav, goStock }) {
                 onClick={() => nav('/pools?tab=qiehuan')}
                 title="点击跳转 股票池 → 切换候选池"
               >
-                <span className="lbl">切换池 qiehuan ›</span>
-                <span className="val" style={{ color: '#cdd9f0' }}>{pools.qiehuan ?? '—'}</span>
+                <span className="pool-head">
+                  <span className="pool-dot qh" />
+                  <span className="lbl">切换池 <em>qiehuan</em></span>
+                  <span className="pool-ic">
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M9 5l7 7-7 7" /></svg>
+                  </span>
+                </span>
+                <span className="pool-count"><b style={{ color: '#cdd9f0' }}>{pools.qiehuan ?? '—'}</b><i>只候选</i></span>
               </button>
             </div>
             <div className="dash-sig-row">

@@ -288,21 +288,29 @@ def sector_move_board(d=None):
         except Exception:
             pass
 
-    # 每桶: 指数涨跌(相对上一桶) + 板块流量
-    buckets, moves = [], []
+    # 每桶: 指数涨跌(相对上一桶) —— 与板块贡献无关, 只描述指数本身
+    buckets = []
     prev_close = None
-    for i, b in enumerate(bars):
+    for b in bars:
         t, close, yi = b["t"], b["close"], b["yi"]
         move = round((close / prev_close - 1) * 100, 3) if prev_close else None
-        rec = {"t": t, "close": close, "yi": yi, "move_pct": move}
-        buckets.append(rec)
+        buckets.append({"t": t, "close": close, "yi": yi, "move_pct": move})
         prev_close = close
-        bflow = flow.get(t)
-        # 指数异动桶: 5分钟涨跌幅度≥0.05% 或 极端量能(>全天桶均值2.2倍)
-        if (move is not None and abs(move) >= 0.05) or (bflow and yi and yi >= 3.5 * _bucket_avg_yi(bars)):
-            if not bflow:
+
+    # 板块标记: 首选“个股5分钟K×市值权重”归因(真实具体板块); 失败再退回档案口径
+    moves = _movers_by_stocks(d, bars)
+    note = "上证5分钟K × 沪市成交额居前80只×市值权重估算板块贡献"
+    if moves is None and arch_rows:
+        moves = []
+        prev_close2 = None
+        for b in bars:
+            t, close = b["t"], b["close"]
+            move = round((close / prev_close2 - 1) * 100, 3) if prev_close2 else None
+            prev_close2 = close
+            bflow = flow.get(t)
+            if not bflow or move is None or abs(move) < 0.05:
                 continue
-            mv = 1 if (move or 0) >= 0 else -1
+            mv = 1 if move >= 0 else -1
             scored = []
             for sec, delta in bflow.items():
                 dp = sp.get(sec)
@@ -311,19 +319,163 @@ def sector_move_board(d=None):
                 match = 1 if (dp > 0) == (mv > 0) else (0.6 if dp == 0 else 0)
                 scored.append((sec, delta, dp, match))
             scored.sort(key=lambda x: -(x[1] * x[3]))
-            picks = []
-            for sec, delta, dp, _m in scored[:3]:
-                if delta <= 0.5:   # 小于0.5亿的桶内增量忽略
-                    continue
-                picks.append({"sector": sec, "pct": dp, "delta_yi": round(delta, 2)})
+            picks = [{"sector": s, "pct": dp, "delta_yi": round(dl, 2)}
+                     for s, dl, dp, _m in scored[:3] if dl > 0.5]
             if picks:
-                moves.append({"t": t, "close": close, "yi": yi, "move_pct": move,
+                moves.append({"t": t, "close": close, "yi": b["yi"], "move_pct": move,
                               "dir": "up" if mv > 0 else "down", "sectors": picks})
-    moves.sort(key=lambda x: -abs(x["move_pct"] or 0))
-    moves = moves[:24]
-    moves.sort(key=lambda x: x["t"])
+        note = "分时档案口径(盘后自动积累, 仅供兜底)"
+    moves = (moves or [])[:24]
     return {"date": d, "days": avail, "buckets": buckets, "moves": moves,
-            "has_archive": bool(arch_rows)}
+            "has_archive": bool(arch_rows), "note": note}
+
+
+# ---------------------------------------------------------------- 板块异动归因: 个股5分钟K × 市值权重
+_sm_memo = {"d": "", "val": None, "ts": 0.0}
+_sm_lock = __import__("threading").Lock()
+
+
+def _fetch_stock_min_full(symbol):
+    """个股5分钟K(新浪) → [{day, close, amount}], 失败返回 []"""
+    import urllib.request
+    import json as _j
+    try:
+        url = ("https://quotes.sina.cn/cn/api/json_v2.php/CN_MarketDataService."
+               "getKLineData?symbol=%s&scale=5&ma=no&datalen=400" % symbol)
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        rows = _j.loads(urllib.request.urlopen(req, timeout=12).read().decode("utf-8", "ignore"))
+        out = []
+        for r in rows or []:
+            try:
+                out.append({"day": str(r["day"]), "close": float(r.get("close") or 0),
+                            "amount": float(r.get("amount") or 0)})
+            except Exception:
+                continue
+        return out
+    except Exception:
+        return []
+
+
+def _movers_by_stocks(d, bars):
+    """“哪几个具体板块拖动了上证指数”：取沪市(6开头)当日成交额居前80只个股,
+    拉取各自5分钟K, 用 市值(nmc) 权重把每5分钟涨幅折算为对上证指数的贡献(%), 再按板块聚合。
+    仅保留指数单桶|涨跌|≥0.045%的时段, 标记同向贡献最大的板块。无数据/失败返回 []。"""
+    global _sm_memo
+    try:
+        now = time.time()
+        # 今日盘中每4分钟刷新; 历史日/已收盘直接用磁盘缓存
+        cache_file = os.path.join(ARCH_DIR, f"sm_{d}.json")
+        if _sm_memo["d"] == d and now - _sm_memo["ts"] < 240:
+            return list(_sm_memo["val"])
+        if os.path.exists(cache_file) and d < cn_time.today_str():
+            try:
+                with open(cache_file, "r", encoding="utf-8") as f:
+                    cached = json.load(f)
+                _sm_memo.update({"d": d, "val": cached, "ts": now})
+                return list(cached)
+            except Exception:
+                pass
+        from . import market as real_mkt
+        snap = real_mkt.snapshot()
+        quotes = snap.get("quotes") or {}
+        c2i = real_mkt.get_industry_cache().get("code2industry", {})
+        # 指数每桶涨跌(相对上一桶), 由自身K线序列现算(外部 bars 无 move 字段)
+        bs = sorted(bars, key=lambda x: x["t"])
+        idx_t, _pv = {}, None
+        for b in bs:
+            mv = round((b["close"] / _pv - 1) * 100, 3) if _pv else None
+            idx_t[b["t"]] = {"close": b["close"], "yi": b.get("yi"), "move_pct": mv}
+            _pv = b["close"]
+        if len(idx_t) < 2:
+            return []
+        # 候选池: 沪市且可归板块、有成交额与市值
+        cand = [(c, q) for c, q in quotes.items()
+                if c.startswith(("60", "68")) and c2i.get(c)
+                and (q.get("amount") or 0) > 0 and (q.get("nmc") or 0) > 0]
+        cand.sort(key=lambda x: -(x[1]["amount"] or 0))
+        top = cand[:80]
+        if len(top) < 15:
+            return []
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        with ThreadPoolExecutor(max_workers=12) as ex:
+            futs = {ex.submit(_fetch_stock_min_full, "sh" + c): c for c, _ in top}
+            raws = {}
+            for fu in as_completed(futs):
+                c = futs[fu]
+                try:
+                    rows = fu.result()
+                except Exception:
+                    rows = []
+                raws[c] = rows
+        # 每只股: 保留 d-1 最后一根收盘(算09:35涨幅) + d 全天5分钟
+        prev_close = {}
+        day_rows = {}
+        for c, rows in raws.items():
+            byday = {}
+            for r in rows:
+                byday.setdefault(r["day"][:10], []).append(r)
+            ds = sorted(byday)
+            if d not in byday:
+                continue
+            prevs = [x for x in ds if x < d]
+            if prevs:
+                prev_close[c] = byday[prevs[-1]][-1]["close"]
+            day_rows[c] = byday[d]
+        if len(day_rows) < 15:
+            return []
+        nmc = {c: q["nmc"] for c, q in top}
+        wsum = sum(nmc.values()) or 1.0
+        # 板块贡献聚合: t -> {板块: {"pct": 加权贡献%, "amt_yi": 该桶板块内成交额(亿)}}
+        agg = {}
+        for c, rows in day_rows.items():
+            sec = c2i.get(c) or "其他"
+            prev = prev_close.get(c)
+            w = nmc[c] / wsum
+            for r in rows:
+                t = r["day"][11:16]
+                if t not in idx_t:
+                    continue
+                close = r["close"]
+                pct = (close / prev - 1) * 100 if prev else 0.0
+                a = agg.setdefault(t, {})
+                s = a.setdefault(sec, {"p": 0.0, "amt": 0.0})
+                s["p"] += pct * w
+                s["amt"] += (r["amount"] or 0) / 1e8
+                prev = close
+        moves = []
+        for t, secs in agg.items():
+            mv = (idx_t[t] or {}).get("move_pct")
+            if mv is None or abs(mv) < 0.045:
+                continue
+            arr = [(s, v["p"], v["amt"]) for s, v in secs.items() if v["p"] != 0]
+            if not arr:
+                continue
+            arr.sort(key=lambda x: -abs(x[1]))
+            sgn = 1 if mv > 0 else -1
+            picks = [x for x in arr if (x[1] > 0) == (sgn > 0)][:3]
+            if not picks:
+                picks = arr[:1]
+            moves.append({
+                "t": t, "close": idx_t[t]["close"], "yi": idx_t[t]["yi"],
+                "move_pct": mv, "dir": "up" if mv > 0 else "down",
+                "sectors": [{"sector": s, "pct": round(p, 3), "amt_yi": round(a, 1)}
+                            for s, p, a in picks],
+            })
+        moves.sort(key=lambda x: -abs(x["move_pct"]))
+        moves = moves[:18]
+        moves.sort(key=lambda x: x["t"])
+        _sm_memo.update({"d": d, "val": moves, "ts": time.time()})
+        if d < cn_time.today_str():
+            try:
+                _mkdir()
+                with open(cache_file, "w", encoding="utf-8") as f:
+                    json.dump(moves, f, ensure_ascii=False)
+            except Exception:
+                pass
+        return moves
+    except Exception as e:
+        log.warning("movers by stocks: %s", e)
+        return []
 
 
 def _bucket_avg_yi(bars):
