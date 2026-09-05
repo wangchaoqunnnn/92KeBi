@@ -462,34 +462,23 @@ const MV_DOWN = '#22c993'    // 跌=绿
 const MV_IDX = '#ffd666'
 const MV_BAR = 'rgba(91,140,255,.85)'   // 上证5分钟成交额柱(明确蓝色, 避免与绿▼混淆)
 
-function _ts(d, t) {
-  return new Date(`${d} ${t}:00`).getTime()
-}
 function sectorMoveOption(d) {
   const buckets = d.buckets || []
   const moves = d.moves || []
-  const day = d.date
-  const idxData = buckets.map((b) => [_ts(day, b.t), b.close])
-  const barData = buckets.map((b) => [_ts(day, b.t), b.yi])
-  const upMoves = moves.filter((m) => m.dir === 'up').map((m) => ({
-    value: [_ts(day, m.t), m.close], m,
-  }))
-  const downMoves = moves.filter((m) => m.dir !== 'up').map((m) => ({
-    value: [_ts(day, m.t), m.close], m,
-  }))
-  const minT = _ts(day, '09:15')
-  const maxT = _ts(day, '15:00')
-  const fmtMoves = (sectors) => (sectors || [])
-    .map((s) => `${s.sector} ${s.pct > 0 ? '+' : ''}${fmt(s.pct, 2)}% · ${s.delta_yi}亿`)
-    .join('\n')
+  // 交易时段桶标签(新浪5分钟K本身不含午休11:30-13:00, 分类轴天然折叠午休空档)
+  const labels = buckets.map((b) => b.t)
+  const idxData = buckets.map((b) => [b.t, b.close])
+  const barData = buckets.map((b) => [b.t, b.yi])
+  const upMoves = moves.filter((m) => m.dir === 'up').map((m) => ({ value: [m.t, m.close], m }))
+  const downMoves = moves.filter((m) => m.dir !== 'up').map((m) => ({ value: [m.t, m.close], m }))
+  const short = (t) => (t || '—')
   return {
     backgroundColor: 'transparent',
     color: [MV_BAR, MV_IDX, MV_UP, MV_DOWN],
     tooltip: {
       ...TOOLTIP, trigger: 'item', confine: true,
       formatter: (p) => {
-        const t = new Date(p.value[0] || p.data[0])
-        const hh = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`
+        const hh = short(p.data?.m?.t || p.value?.[0] || '')
         if (p.seriesType === 'line') return `<b>${hh}</b><br/>上证指数 ${fmt(p.value[1])}`
         if (p.seriesType === 'bar') return `<b>${hh}</b><br/>上证5分钟成交额 ${fmt(p.value[1], 1)} 亿`
         const mm = p.data.m || {}
@@ -507,18 +496,13 @@ function sectorMoveOption(d) {
     },
     grid: { left: 52, right: 52, top: 30, bottom: 42 },
     xAxis: {
-      type: 'time', min: minT, max: maxT,
-      axisLabel: {
-        color: AXIS_TEXT, fontSize: 11,
-        formatter: (v) => {
-          const t = new Date(v)
-          return `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`
-        },
-      },
+      type: 'category', data: labels, boundaryGap: true,
+      axisLabel: { color: AXIS_TEXT, fontSize: 10, interval: 'auto', hideOverlap: true },
       axisLine: { lineStyle: { color: GRID_LINE } },
       axisTick: { show: false },
       splitLine: { show: false },
     },
+    // 11:30 与 13:05 相邻即午休被折叠(新浪5分钟K无午休数据)
     yAxis: [
       { type: 'value', name: '异动统计·成交额(亿)', nameTextStyle: { color: AXIS_TEXT, fontSize: 11 },
         axisLabel: { color: AXIS_TEXT, fontSize: 11 }, splitLine: SPLIT_LINE },
@@ -539,6 +523,12 @@ function sectorMoveOption(d) {
       { name: '上证指数', type: 'line', yAxisIndex: 1, data: idxData, showSymbol: false,
         smooth: 0.15, lineStyle: { width: 2, color: MV_IDX },
         itemStyle: { color: MV_IDX },
+        markLine: {
+          symbol: 'none', silent: true,
+          label: { formatter: '午休', color: '#7a8fb5', fontSize: 10, position: 'insideEndTop' },
+          lineStyle: { color: 'rgba(255,255,255,.28)', type: 'dashed' },
+          data: [{ xAxis: '11:30' }],
+        },
         areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
           colorStops: [{ offset: 0, color: 'rgba(255,214,102,.22)' }, { offset: 1, color: 'rgba(255,214,102,0)' }] } } },
       { name: '上涨推动板块', type: 'scatter', yAxisIndex: 1, data: upMoves,
@@ -967,7 +957,7 @@ export default function DashboardPage({ route, params, nav, goStock }) {
 
       {/* 3.5) 板块异动看板 */}
       <Card
-        title={`板块异动 · 上证指数 9:15–15:00`}
+        title="板块异动 · 上证指数分时（09:30–11:30 / 13:00–15:00，午休已折叠）"
         extra={
           <span style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             {mv && mv.days && mv.days.length > 1 && (
