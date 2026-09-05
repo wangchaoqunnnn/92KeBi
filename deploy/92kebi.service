@@ -20,8 +20,8 @@ LimitNOFILE=65536
 # 日志(可被 journalctl 捕获; 如需落文件可改用 StandardOutput=append:/var/log/92kebi.log)
 StandardOutput=journal
 StandardError=journal
-# 若服务被 OOM kill 也自动拉起
-OOMPolicy=continue
+# 说明: 未用 OOMPolicy(需 systemd>=246, 老发行版会报 Unknown lvalue);
+#       进程被 OOM 杀掉后由 Restart=always 自动拉起, 效果等价。
 
 [Install]
 WantedBy=multi-user.target
