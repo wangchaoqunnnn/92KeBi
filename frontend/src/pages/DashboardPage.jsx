@@ -460,7 +460,7 @@ function SectorRow({ s, rank, open, busy, err, detail, onToggle, goStock }) {
 const MV_UP = '#ff5b6b'      // A股涨=红
 const MV_DOWN = '#22c993'    // 跌=绿
 const MV_IDX = '#ffd666'
-const MV_BAR = 'rgba(91,140,255,.55)'
+const MV_BAR = 'rgba(91,140,255,.85)'   // 上证5分钟成交额柱(明确蓝色, 避免与绿▼混淆)
 
 function _ts(d, t) {
   return new Date(`${d} ${t}:00`).getTime()
@@ -502,7 +502,8 @@ function sectorMoveOption(d) {
     },
     legend: {
       top: 0, right: 8, textStyle: { color: AXIS_TEXT, fontSize: 11 },
-      data: ['上证指数', '带动上涨板块', '拖累下跌板块'],
+      data: ['上证成交额(亿/5min)', '上证指数', '上涨推动板块', '拖累下跌板块'],
+      icon: 'roundRect',
     },
     grid: { left: 52, right: 52, top: 30, bottom: 42 },
     xAxis: {
@@ -533,14 +534,14 @@ function sectorMoveOption(d) {
         textStyle: { color: AXIS_TEXT, fontSize: 10 } },
     ],
     series: [
-      { name: '异动统计', type: 'bar', yAxisIndex: 0, data: barData, barWidth: '62%',
+      { name: '上证成交额(亿/5min)', type: 'bar', yAxisIndex: 0, data: barData, barWidth: '62%',
         itemStyle: { color: MV_BAR, borderRadius: [2, 2, 0, 0] }, emphasis: { disabled: true } },
       { name: '上证指数', type: 'line', yAxisIndex: 1, data: idxData, showSymbol: false,
         smooth: 0.15, lineStyle: { width: 2, color: MV_IDX },
         itemStyle: { color: MV_IDX },
         areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
           colorStops: [{ offset: 0, color: 'rgba(255,214,102,.22)' }, { offset: 1, color: 'rgba(255,214,102,0)' }] } } },
-      { name: '带动上涨板块', type: 'scatter', yAxisIndex: 1, data: upMoves,
+      { name: '上涨推动板块', type: 'scatter', yAxisIndex: 1, data: upMoves,
         symbol: 'triangle', symbolRotate: 0, symbolSize: 9,
         itemStyle: { color: MV_UP, borderColor: '#ffd7db', borderWidth: 1 },
         label: { show: true, position: 'top', color: '#ff8a92', fontSize: 10,
