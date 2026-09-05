@@ -157,7 +157,16 @@ def health():
 
 
 # ---------------- 前端静态资源(构建产物) ----------------
-if __import__("os").path.isdir(STATIC_DIR):
+_STATIC_MISSING_MSG = (
+    "92K API 已运行，但前端构建产物缺失：backend/app/static/index.html 不存在。\n"
+    "处理：1) 确认 git 已更新到最新(main 分支已包含构建产物, 共 index.html + assets/ 下 css/js);\n"
+    "      2) 若仍缺失, 在项目根目录执行前端构建后重启: cd frontend && pnpm install && pnpm build\n"
+    "         (构建输出会自动写入 backend/app/static/);\n"
+    "      3) 重启服务: systemctl restart 92kebi。"
+)
+
+if __import__("os").path.isdir(STATIC_DIR) \
+        and __import__("os").path.isfile(__import__("os").path.join(STATIC_DIR, "index.html")):
     app.mount("/assets", StaticFiles(directory=__import__("os").path.join(STATIC_DIR, "assets")),
               name="assets")
 
@@ -169,6 +178,9 @@ if __import__("os").path.isdir(STATIC_DIR):
             return FileResponse(p)
         return FileResponse(__import__("os").path.join(STATIC_DIR, "index.html"))
 else:
+    log.error("前端构建产物缺失: %s", STATIC_DIR)
+
     @app.get("/", include_in_schema=False)
     def root():
-        return {"msg": "92K API running; 前端未构建，请运行前端 npm run build"}
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse(_STATIC_MISSING_MSG)
