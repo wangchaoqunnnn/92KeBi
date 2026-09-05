@@ -616,23 +616,106 @@ def manual_sell(code):
     return {"ok": True, "code": code, "price": round(price, 2), "pnl_pct": pnl, "push": push}
 
 
-def manual_watch(code):
-    """手动加入观察池"""
+def _find_stock(key, ctx):
+    """按代码或名称在全市场(real快照/ mock样本)查找股票。
+    返回 ("found", code, name, sector) / ("ambiguous", [candidates]) / ("notfound", None)"""
+    import re
+    key = (key or "").strip()
+    if not key:
+        return "notfound", None
+    quotes = {}
+    industry = None
+    if DATA_SOURCE == "real":
+        from .real import market as real_mkt
+        quotes = real_mkt.snapshot().get("quotes") or {}
+        industry = real_mkt.industry_of
+    else:
+        st = (ctx or {}).get("stocks") or {}
+        quotes = {c: {"name": m.get("name", c), "sector": m.get("sector", "")}
+                  for c, m in st.items()}
+        industry = lambda c: ((ctx or {}).get("stocks", {}).get(c) or {}).get("sector", "")  # noqa: E731
+    # 纯 6 位代码
+    if re.fullmatch(r"\d{6}", key):
+        q = quotes.get(key)
+        if q is None:
+            return "notfound", None
+        return "found", (key, q["name"], (industry(key) if industry else q.get("sector")) or "")
+    # 名称: 先精确, 再包含; 唯一才直接命中
+    items = [(c, qq) for c, qq in quotes.items()]
+    exact = [(c, qq) for c, qq in items if qq["name"] == key]
+    pool = exact or [(c, qq) for c, qq in items if key in qq["name"]]
+    if not pool:
+        return "notfound", None
+    if len(pool) == 1:
+        c, qq = pool[0]
+        return "found", (c, qq["name"], (industry(c) if industry else qq.get("sector")) or "")
+    cands = [{"code": c, "name": qq["name"],
+              "sector": (industry(c) if industry else qq.get("sector")) or ""}
+             for c, qq in pool[:10]]
+    return "ambiguous", cands
+
+
+def _manual_score(code, ctx):
+    """手动观察的算法评分: 与自动池同一套引擎(feat_for_code + 龙头六维 L-01..L-06)。
+    返回 (score0-100, items[])；异常时返回 (None, []) 不阻断入库。"""
+    try:
+        stats = (ctx or {}).get("today_stats") or {}
+        if DATA_SOURCE == "real":
+            from .real import analyze_real
+            feat, meta = analyze_real.feat_for_code(code)
+        else:
+            feat = ((ctx or {}).get("feats") or {}).get(code)
+            meta = ((ctx or {}).get("stocks") or {}).get(code) or {}
+        if not feat:
+            return None, []
+        from .core import leaders
+        total, items = leaders._conds(feat, stats, meta or None)
+        return round(total, 1), items
+    except Exception as e:  # noqa
+        log.warning("manual score %s: %s", code, e)
+        return None, []
+
+
+def manual_watch(q):
+    """手动加入观察池(支持股票代码或名称)。记录时间=加入时; 观察理由=手动加入;
+    评分由算法(龙头六维 L-01..L-06)自动给出。"""
     setup()
+    q = (q or "").strip()
+    if not q:
+        return {"ok": False, "error": "请输入股票代码或名称"}
     view, ctx = _signal_view()
-    meta = (ctx or {}).get("stocks", {}).get(code) or {}
-    price = _price_for(code, ctx)
+    state, got = _find_stock(q, ctx)
+    if state == "notfound":
+        return {"ok": False, "error": "未找到该股票，请核对代码或名称"}
+    if state == "ambiguous":
+        return {"ok": False,
+                "error": f"名称“{q}”匹配到 {len(got)} 只股票，请改输入 6 位代码或从下方列表点选",
+                "candidates": got}
+    code, name, sector = got
+    dup = db.query_one("SELECT id FROM ops_items WHERE pool='watch' AND code=? AND status='open'",
+                       (code,))
+    if dup:
+        return {"ok": False, "error": f"{name}（{code}）已在观察池"}
+    score, items = _manual_score(code, ctx)
     now = _now()
     date = _today()
-    if db.query_one("SELECT id FROM ops_items WHERE pool='watch' AND code=? AND status='open'", (code,)):
-        return {"ok": False, "error": "已在观察池"}
-    db.execute(
-        "INSERT INTO ops_items(code,name,sector,pool,status,reason,last_date,created_at,updated_at) "
-        "VALUES(?,?,?,?,?,?,?,?,?)",
-        (code, meta.get("name") or code, meta.get("sector") or "",
-         "watch", "open", "手动加入观察", date, now, now))
-    _prompt(code, meta.get("name") or code, "watch", None, "手动观察", price, "手动加入观察池")
-    return {"ok": True}
+    # 记录时间=加入时: entry_date/entry_time 记完整时刻, last_date 记日期
+    try:
+        db.execute(
+            "INSERT INTO ops_items(code,name,sector,pool,status,reason,last_date,entry_date,"
+            "entry_time,created_at,updated_at,score,note) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (code, name, sector, "watch", "open", "手动加入", date, date, now[11:], now, now,
+             score, "手动加入观察(算法评分)"))
+    except Exception as e:  # noqa
+        log.warning("manual watch insert: %s", e)
+        return {"ok": False, "error": str(e)[:150]}
+    _prompt(code, name, "watch", None, "手动观察", _price_for(code, ctx),
+            f"手动加入（算法评分 {score if score is not None else '—'}）")
+    log.info("manual watch added %s %s score=%s", code, name, score)
+    return {"ok": True, "code": code, "name": name, "sector": sector,
+            "score": score, "dims": items or [],
+            "reason": "手动加入", "date": date}
 
 
 def delete_sell(item_id):

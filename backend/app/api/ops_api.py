@@ -32,8 +32,9 @@ def ops_manual_sell(code: str = Query(...)):
 
 
 @router.post("/manual-watch")
-def ops_manual_watch(code: str = Query(...)):
-    return ops.manual_watch(code)
+def ops_manual_watch(q: str = Query("", max_length=30)):
+    """手动加入观察池: q 支持 6 位代码或股票名称(由后端解析+算法评分)"""
+    return ops.manual_watch(q)
 
 
 @router.post("/delete")

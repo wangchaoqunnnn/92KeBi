@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import { Card, Tag, Empty, Loading, ErrorBox, PctText, useTableSort, sortRows, SortTh } from '../components/ui'
 import { fmt, fmtPct } from '../format'
@@ -13,7 +13,12 @@ export default function OpsPage({ route, params, nav, goStock }) {
   const [data, setData] = useState(null)
   const [err, setErr] = useState(null)
   const [busy, setBusy] = useState(false)
-  const [code, setCode] = useState('')
+  // 手动加入观察: 代码/名称检索
+  const [wQ, setWQ] = useState('')
+  const [wOpts, setWOpts] = useState([])
+  const [wPick, setWPick] = useState(null)
+  const [wShow, setWShow] = useState(false)
+  const wTimer = useRef(null)
 
   const load = useCallback(() => {
     api.opsOverview().then(setData).catch(setErr)
@@ -65,11 +70,47 @@ export default function OpsPage({ route, params, nav, goStock }) {
       if (!r.ok) throw new Error(r.error || '移除失败')
       if (pool === 'buy' && r.push && r.push.sent === 0) throw new Error(`已移除 ${c}，但微信推送失败：${(r.push.reason || '未知').slice(0, 120)}`)
     }), `已移除 ${pool === 'buy' ? '买入池' : '观察池'}：${c}`)
-  const addWatch = () => {
-    const c = code.trim()
-    if (!/^\d{6}$/.test(c)) { alert('请输入 6 位股票代码'); return }
-    act(() => api.opsManualWatch(c).then((r) => { if (!r.ok) throw new Error(r.error || '加入失败') }), `已加入观察池：${c}`)
-    setCode('')
+  const onWQ = (v) => {
+    setWQ(v)
+    setWPick(null)
+    clearTimeout(wTimer.current)
+    const t = v.trim()
+    if (!t) { setWOpts([]); setWShow(false); return }
+    setWShow(true)
+    wTimer.current = setTimeout(async () => {
+      try {
+        const r = await api.search(t)
+        setWOpts((r.items || []).slice(0, 8))
+      } catch { setWOpts([]) }
+    }, 280)
+  }
+  const pickW = (o) => { setWPick(o); setWQ(`${o.name} ${o.code}`); setWShow(false) }
+  const submitWatch = () => {
+    const t = wQ.trim()
+    let code = ''
+    if (wPick) code = wPick.code
+    else if (/^\d{6}$/.test(t)) code = t
+    else {
+      const m = wOpts.find((o) => o.name === t)
+      if (m) code = m.code
+      else if (wOpts.length === 1) code = wOpts[0].code
+    }
+    if (!code) { alert('请从下拉列表选择匹配的股票，或直接输入 6 位代码'); return }
+    act(async () => {
+      const r = await api.opsManualWatch(code)
+      if (!r.ok) {
+        if (r.candidates && r.candidates.length) {
+          throw new Error(`${r.error}\n候选：${r.candidates.slice(0, 8).map((c) => `${c.code} ${c.name}`).join('、')}`)
+        }
+        throw new Error(r.error || '加入失败')
+      }
+      const scoreTxt = r.score != null ? `${r.score} 分` : '—'
+      const dimTxt = (r.dims || []).length
+        ? `\n维度：${r.dims.map((d) => `${d.name}${d.score}`).join(' · ')}`
+        : ''
+      window.alert(`已加入观察池：${r.name}（${r.code}）\n记录时间：${r.date}\n算法评分：${scoreTxt}\n观察理由：${r.reason}${dimTxt}`)
+    })
+    setWQ(''); setWPick(null); setWOpts([]); setWShow(false)
   }
   const [openR, setOpenR] = useState({})
   const toggleReason = (id) => setOpenR((m) => ({ ...m, [id]: !m[id] }))
@@ -89,8 +130,17 @@ export default function OpsPage({ route, params, nav, goStock }) {
         .ops-note{ color:#5f7598; font-size:12px; margin-top:6px; }
         .ops-act{ display:inline-flex; gap:6px; }
         .ops-act .btn{ padding:2px 8px; font-size:12px; }
-        .ops-watch-add{ display:flex; gap:6px; align-items:center; }
+        .ops-watch-add{ display:flex; gap:6px; align-items:center; position:relative; }
         .ops-watch-add input{ width:130px; }
+        .ops-watch-sug{ position:absolute; left:0; top:calc(100% + 4px); z-index:60; width:300px;
+          max-height:240px; overflow:auto; padding:5px; background:#111a2b; border:1px solid rgba(255,255,255,.14);
+          border-radius:10px; box-shadow:0 12px 32px rgba(0,0,0,.55); display:flex; flex-direction:column; gap:2px; }
+        .ops-watch-sug button{ display:flex; align-items:center; gap:8px; width:100%; text-align:left;
+          padding:7px 10px; border-radius:7px; background:transparent; border:none; color:#c9d7ee; font-size:12.5px;
+          cursor:pointer; }
+        .ops-watch-sug button:hover{ background:rgba(122,169,255,.16); }
+        .ops-watch-sug button span{ color:#7f94b5; font-family:var(--mono); font-size:11.5px; }
+        .ops-watch-sug button em{ margin-left:auto; color:#5f7598; font-style:normal; font-size:11px; }
         .ops-reason-cell{ min-width:220px; max-width:460px; }
         .ops-reason{ margin:0; line-height:1.6; font-size:12.5px; color:#b9c6dd; word-break:break-word;
           white-space:normal; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; overflow:hidden; cursor:pointer; }
@@ -247,9 +297,26 @@ export default function OpsPage({ route, params, nav, goStock }) {
           <Card
             title={`观察池 · ${watch.length}`}
             extra={
-              <div className="ops-watch-add">
-                <input className="input" placeholder="输入6位代码" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} />
-                <button className="btn btn-sm" onClick={addWatch}>手动加入观察</button>
+              <div className="ops-watch-add" style={{ position: 'relative' }}>
+                <input
+                  className="input"
+                  style={{ width: 220 }}
+                  placeholder="输入代码或名称，如 600519 / 贵州茅台"
+                  value={wQ}
+                  onChange={(e) => onWQ(e.target.value)}
+                  onFocus={() => { if (wOpts.length) setWShow(true) }}
+                  onBlur={() => setTimeout(() => setWShow(false), 180)}
+                />
+                <button className="btn btn-sm" onClick={submitWatch} disabled={busy}>手动加入观察</button>
+                {wShow && wOpts.length > 0 && (
+                  <div className="ops-watch-sug">
+                    {wOpts.map((o) => (
+                      <button key={o.code} type="button" onMouseDown={(e) => { e.preventDefault(); pickW(o) }}>
+                        <b>{o.name}</b><span>{o.code}</span><em>{o.sector}</em>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             }
           >
