@@ -53,3 +53,15 @@ def ops_remove_buy(item_id: int = Query(...)):
 def ops_push_test():
     """微信推送连通性测试(需配置 WECHAT_WEBHOOK 环境变量)"""
     return {"ok": True, **ops.wechat_push_test()}
+
+
+@router.post("/demo-buy")
+def ops_demo_buy():
+    """新增一条模拟持仓(买入池)用于微信推送联调(测完可移除)"""
+    return ops.add_demo_buy()
+
+
+@router.post("/demo-sell")
+def ops_demo_sell():
+    """新增一条模拟结算(卖出池)用于微信推送联调(测完可删除)"""
+    return ops.add_demo_sell()

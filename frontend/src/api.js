@@ -32,6 +32,8 @@ export const api = {
   opsManualWatch: (q) => req(`/api/ops/manual-watch?q=${encodeURIComponent(q)}`, { method: 'POST', body: '{}' }),
   opsDelete: (itemId) => req(`/api/ops/delete?item_id=${itemId}`, { method: 'POST', body: '{}' }),
   opsRemoveBuy: (itemId) => req(`/api/ops/remove-buy?item_id=${itemId}`, { method: 'POST', body: '{}' }),
+  opsDemoBuy: () => req('/api/ops/demo-buy', { method: 'POST', body: '{}' }),
+  opsDemoSell: () => req('/api/ops/demo-sell', { method: 'POST', body: '{}' }),
 
   overview: () => req('/api/dashboard/overview'),
   sectors: () => req('/api/dashboard/sectors'),

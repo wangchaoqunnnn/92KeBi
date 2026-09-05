@@ -765,3 +765,78 @@ def remove_buy(item_id):
         log.warning("wechat remove buy push: %s", e)
         push = {"sent": 0, "reason": str(e)[:120]}
     return {"ok": True, "removed": 1, "name": row["name"], "push": push}
+
+
+# ---------------------------------------------------------------- 模拟数据(仅用于推送联调, 手动触发)
+_DEMO_STOCKS = [
+    {"code": "601989", "name": "中国重工", "sector": "船舶制造", "buy": 5.19},
+    {"code": "600150", "name": "中国船舶", "sector": "船舶制造", "buy": 33.10},
+    {"code": "600685", "name": "中船防务", "sector": "船舶制造", "buy": 21.35},
+    {"code": "000592", "name": "平潭发展", "sector": "农林牧渔", "buy": 7.12},
+    {"code": "002415", "name": "海康威视", "sector": "电子器件", "buy": 32.50},
+    {"code": "600519", "name": "贵州茅台", "sector": "酿酒行业", "buy": 1330.0},
+]
+
+
+def add_demo_buy():
+    """新增一条模拟持仓(买入池)并推送微信群 —— 手动点击联调用, 测完可点“移除”删除"""
+    setup()
+    taken = {r["code"] for r in db.query(
+        "SELECT code FROM ops_items WHERE pool='buy' AND status='open'")}
+    pick = next((s for s in _DEMO_STOCKS if s["code"] not in taken), None)
+    if not pick:
+        return {"ok": False, "error": "示例标的均已在买入池，请先移除一条再试"}
+    now = _now()
+    date = _today()
+    reason = f"模拟持仓：微信推送联调（{date} {now[11:]}，测试后可点“移除”删除）"
+    try:
+        db.execute(
+            "INSERT INTO ops_items(code,name,sector,pool,status,strategy,signal,reason,"
+            "entry_date,entry_time,entry_price,created_at,updated_at,last_date,note) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (pick["code"], pick["name"], pick["sector"], "buy", "open", "demo_push",
+             "模拟买点(推送联调)", reason, date, now[11:], pick["buy"], now, now, date,
+             "[模拟数据·用于推送联调，可移除]"))
+    except Exception as e:  # noqa
+        log.warning("demo buy: %s", e)
+        return {"ok": False, "error": str(e)[:150]}
+    push = _notify_buy_change(pick["code"], pick["name"], pick["sector"], pick["buy"],
+                              "模拟买点(推送联调)", reason, f"{date} {now[11:]}",
+                              tag="新开仓(模拟测试)")
+    return {"ok": True, "code": pick["code"], "name": pick["name"],
+            "entry_price": pick["buy"], "sector": pick["sector"], "push": push}
+
+
+def add_demo_sell():
+    """新增一条模拟已结算(卖出池)并推送微信群 —— 手动点击联调用, 测完可删除"""
+    setup()
+    taken = {r["code"] for r in db.query("SELECT code FROM ops_items WHERE pool='sell'")}
+    pick = next((s for s in _DEMO_STOCKS if s["code"] not in taken), None)
+    if not pick:
+        return {"ok": False, "error": "示例标的均已在卖出池，请先删除一条再试"}
+    now = _now()
+    date = _today()
+    entry = round(pick["buy"] * 0.972, 2)   # 模拟昨日买入
+    pnl = round((pick["buy"] / entry - 1) * 100, 2)
+    note = "[模拟数据·用于推送联调，可删除]"
+    reason = "模拟买入：微信推送联调（昨日买入）"
+    exit_reason = "模拟卖出：用于测试卖出池结算推送"
+    try:
+        with db.tx() as con:
+            cur = con.execute(
+                "INSERT INTO ops_items(code,name,sector,pool,status,strategy,signal,reason,"
+                "entry_date,entry_time,entry_price,exit_date,exit_time,exit_price,exit_reason,"
+                "pnl_pct,hold_days,created_at,updated_at,last_date,note) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (pick["code"], pick["name"], pick["sector"], "sell", "closed", "demo_push",
+                 "模拟结算(推送联调)", reason, date, "09:35:00", entry, date, now[11:],
+                 pick["buy"], exit_reason, pnl, 1, now, now, date, note))
+            row_id = cur.lastrowid
+        row = db.query_one("SELECT * FROM ops_items WHERE id=?", (row_id,))
+    except Exception as e:  # noqa
+        log.warning("demo sell: %s", e)
+        return {"ok": False, "error": str(e)[:150]}
+    push = _notify_sell_change(row, tag="模拟结算（测试）",
+                               extra="模拟数据：用于测试卖出池结算推送，测完可在页面删除")
+    return {"ok": True, "code": pick["code"], "name": pick["name"], "id": row_id,
+            "pnl_pct": pnl, "push": push}

@@ -67,6 +67,19 @@ export default function OpsPage({ route, params, nav, goStock }) {
       if (r.push && r.push.sent === 0) throw new Error(`已移除 ${row.name}，但微信推送失败：${(r.push.reason || '未知').slice(0, 120)}`)
     }), `已移除买入池持仓：${row.name}`)
   }
+  const demoPush = (kind) => {
+    const isBuy = kind === 'buy'
+    if (!window.confirm(`新增一条${isBuy ? '模拟持仓(买入池)' : '模拟结算(卖出池)'}数据并推送微信群（推送联调用）？\n测完可在对应池中 移除/删除。`)) return
+    act(async () => {
+      const r = isBuy ? await api.opsDemoBuy() : await api.opsDemoSell()
+      if (!r.ok) throw new Error(r.error || '新增失败')
+      const p = r.push || {}
+      const head = `已新增模拟${isBuy ? '持仓' : '结算'}：${r.name}（${r.code}）` +
+        (isBuy ? ` 买入价 ${fmt(r.entry_price, 2)}` : '')
+      if (p.sent > 0) window.alert(`${head}\n✅ 微信推送已送达`)
+      else window.alert(`${head}\n❌ 微信未送达：${(p.reason || '未知原因').slice(0, 150)}`)
+    })
+  }
   const ignore = (pool, c) =>
     act(() => api.opsIgnore(pool, c).then((r) => {
       if (!r.ok) throw new Error(r.error || '移除失败')
@@ -212,7 +225,12 @@ export default function OpsPage({ route, params, nav, goStock }) {
           {/* 买入池 */}
           <Card
             title={`买入池 · 持仓 ${buys.length}`}
-            extra={<span className="muted">出现卖点会自动提示并结算到卖出池</span>}
+            extra={
+              <span style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <span className="muted">出现卖点会自动提示并结算到卖出池</span>
+                <button className="btn btn-sm" onClick={() => demoPush('buy')} title="新增一条模拟持仓并推送微信群(推送联调, 测完可移除)">＋新增模拟数据</button>
+              </span>
+            }
           >
             {buys.length === 0 ? <Empty text="买入池为空：出现买点提示后自动加入" /> : (
               <div className="table-wrap">
@@ -252,7 +270,15 @@ export default function OpsPage({ route, params, nav, goStock }) {
           </Card>
 
           {/* 卖出池 */}
-          <Card title={`卖出池 · 已结算 ${sells.length}`} extra={<span className="muted">自动记录买入/卖出时间价格、盈亏与买卖理由</span>}>
+          <Card
+            title={`卖出池 · 已结算 ${sells.length}`}
+            extra={
+              <span style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <span className="muted">自动记录买入/卖出时间价格、盈亏与买卖理由</span>
+                <button className="btn btn-sm" onClick={() => demoPush('sell')} title="新增一条模拟结算并推送微信群(推送联调, 测完可删除)">＋新增模拟数据</button>
+              </span>
+            }
+          >
             {sells.length === 0 ? <Empty text="卖出池为空：持仓触发卖点后自动结算到这里" /> : (
               <div className="table-wrap">
                 <table className="tbl ops-tbl">
