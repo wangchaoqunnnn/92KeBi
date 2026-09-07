@@ -399,6 +399,9 @@ def sweep(view=None, ctx=None):
             if not f:
                 continue
             today = f.get("today") or {}
+            if today.get("limit_up"):
+                # 今日涨停: 强势, 任何卖点(含止损纪律)不执行, 不提示卖出
+                continue
             price = _price_for(code, ctx) or today.get("close")
             if not price or price <= 0:
                 continue

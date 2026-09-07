@@ -153,9 +153,10 @@ def for_stock(code, f, ctx):
     if code in pool_codes or (dragon and f["sector"] == dragon["sector"]):
         sigs += buyang_signals(f, ctx, in_pool=(code in pool_codes))
     sigs += qiehuan_signals(f, ctx)
-    # 通用止损纪律提示
+    # 通用止损纪律提示(仅当上一交易日重挫且今日延续走弱; 今日涨停/反包即“纪律取消”不卖)
     p = f.get("prev")
-    if p and p["pct"] <= -5:
+    t = f.get("today") or {}
+    if p and p["pct"] <= -5 and not t.get("limit_up") and (t.get("pct") or 0) < 0:
         sigs.append(_mk(code, f, "generic", "触及止损纪律", "sell", "警示",
                         "上一交易日下跌超过5% → 单笔止损线为-5%, 无条件执行", ctx))
     return sigs
