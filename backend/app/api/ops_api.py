@@ -15,7 +15,7 @@ def ops_overview():
 def ops_flush():
     """立即执行一次自动盯盘扫描(买点/卖点/观察池)"""
     from .. import market_cache
-    view = market_cache.get_view(max_age=0)
+    view = market_cache.get_view(max_age=0, wait=True)
     ctx = market_cache.get_ctx()
     res = ops.sweep(view=view, ctx=ctx)
     return {"ok": True, **res}
