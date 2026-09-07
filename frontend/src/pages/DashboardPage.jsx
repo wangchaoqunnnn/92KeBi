@@ -913,9 +913,15 @@ export default function DashboardPage({ route, params, nav, goStock }) {
             )}
           </div>
           <div className="stat-sub">
-            {volDiff != null
-              ? `较昨 ${volDiff >= 0 ? '多' : '少'} ${Math.abs(volDiff).toFixed(0)}亿（${vol.basis}）`
-              : vol ? '对比数据计算中…' : '分时档案积累中，次日自动可对比'}
+            较昨
+            {volDiff != null ? (
+              <>
+                <span className={volCls} style={{ fontSize: 18, fontWeight: 800, margin: '0 2px' }}>
+                  {volDiff >= 0 ? '多' : '少'} {Math.abs(volDiff).toFixed(0)}亿
+                </span>
+                <span>（{vol.basis}）</span>
+              </>
+            ) : vol ? '对比数据计算中…' : '分时档案积累中，次日自动可对比'}
           </div>
         </Card>
         <Card>
