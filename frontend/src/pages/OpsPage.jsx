@@ -218,8 +218,17 @@ export default function OpsPage({ route, params, nav, goStock }) {
             <Card><div className="stat-label">持仓中（买入池）</div><div className="stat-value">{stats.buy_open ?? '—'}</div><div className="stat-sub">买点触发自动入池</div></Card>
             <Card><div className="stat-label">观察中</div><div className="stat-value">{stats.watch ?? '—'}</div><div className="stat-sub">符合模式待确认</div></Card>
             <Card><div className="stat-label">已结算（卖出池）</div><div className="stat-value">{stats.sold ?? '—'}</div><div className="stat-sub">含盈亏与理由复盘</div></Card>
-            <Card><div className="stat-label">胜率</div><div className="stat-value">{stats.win_rate_pct != null ? `${fmt(stats.win_rate_pct, 1)}%` : '—'}</div><div className="stat-sub">盈利笔 / 已结算笔</div></Card>
-            <Card><div className="stat-label">平均盈 / 亏</div><div className="stat-value up">{stats.avg_win_pct != null ? `+${fmt(stats.avg_win_pct)}%` : '—'}</div><div className="stat-sub down">{stats.avg_loss_pct != null ? `${fmt(stats.avg_loss_pct)}%` : ''} · 平均持有 {stats.avg_hold_days ?? '—'} 天</div></Card>
+            <Card><div className="stat-label">胜率</div><div className="stat-value">{stats.win_rate_pct != null ? `${fmt(stats.win_rate_pct, 1)}%` : '—'}</div><div className="stat-sub">盈利 {stats.wins ?? '—'} 笔 / 已结算 {stats.sold ?? '—'} 笔</div></Card>
+            <Card>
+              <div className="stat-label">盈亏比</div>
+              <div className="stat-value" style={{ color: (stats.pnl_ratio ?? 1) >= 1 ? 'var(--up,#ff4d5a)' : 'var(--down,#2bd09b)' }}>
+                {stats.pnl_ratio != null ? fmt(stats.pnl_ratio, 2) : '—'}
+              </div>
+              <div className="stat-sub">
+                平均盈 <span className="up">{stats.avg_win_pct != null ? `+${fmt(stats.avg_win_pct)}%` : '—'}</span>
+                <span className="down"> 亏 {stats.avg_loss_pct != null ? `${fmt(Math.abs(stats.avg_loss_pct))}%` : '—'}</span> · 持有 {stats.avg_hold_days ?? '—'} 天
+              </div>
+            </Card>
           </div>
 
           {/* 买入池 */}

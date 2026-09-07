@@ -600,6 +600,12 @@ def overview():
             if price and r["entry_price"] else None
     wins = [r for r in sell_rows if (r["pnl_pct"] or 0) > 0]
     loss = [r for r in sell_rows if (r["pnl_pct"] or 0) <= 0]
+    avg_win = round(sum(r["pnl_pct"] for r in wins) / len(wins), 2) if wins else None
+    avg_loss = round(sum(r["pnl_pct"] for r in loss) / len(loss), 2) if loss else None
+    # 盈亏比 = 平均盈利 / 平均亏损绝对值
+    pnl_ratio = None
+    if avg_win is not None and avg_loss is not None and avg_loss != 0:
+        pnl_ratio = round(avg_win / abs(avg_loss), 2)
     return {
         "date": date,
         "mode": "real" if DATA_SOURCE == "real" else "mock",
@@ -607,10 +613,12 @@ def overview():
         "wechat": _wechat_status(),
         "stats": {
             "buy_open": len(buy_rows), "watch": len(watch_rows), "sold": len(sell_rows),
+            "wins": len(wins), "losses": len(loss),
             "today_prompt_buy": sum(1 for p in prompts if p["type"] == "buy"),
             "win_rate_pct": round(len(wins) / len(sell_rows) * 100, 1) if sell_rows else None,
-            "avg_win_pct": round(sum(r["pnl_pct"] for r in wins) / len(wins), 2) if wins else None,
-            "avg_loss_pct": round(sum(r["pnl_pct"] for r in loss) / len(loss), 2) if loss else None,
+            "avg_win_pct": avg_win,
+            "avg_loss_pct": avg_loss,
+            "pnl_ratio": pnl_ratio,
             "avg_hold_days": round(sum((r["hold_days"] or 0) for r in sell_rows) / len(sell_rows), 1) if sell_rows else None,
         },
         "buy": [dict(_row_view(r), last_price=r.get("last_price"), live_pct=r.get("live_pct"))
