@@ -65,3 +65,9 @@ def ops_demo_buy():
 def ops_demo_sell():
     """新增一条模拟结算(卖出池)用于微信推送联调(测完可删除)"""
     return ops.add_demo_sell()
+
+
+@router.post("/admin/t1-fix")
+def ops_t1_fix(rollback: int = Query(0, ge=0, le=1)):
+    """T+1 修复: 查出“当日买入当日卖出”的真实记录; rollback=1 时回滚为买入池持仓"""
+    return ops.t1_fix_sells(rollback=bool(rollback))

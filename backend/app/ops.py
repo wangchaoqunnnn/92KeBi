@@ -430,11 +430,16 @@ def sweep(view=None, ctx=None):
             now = _now()
             try:
                 with db.tx() as con:
-                    con.execute(
+                    # 数据库级 T+1 兜底: 当日买入(entry_date >= 交易日)的行即使被代码漏判也不会被卖出
+                    cur = con.execute(
                         "UPDATE ops_items SET pool='sell', status='closed', "
                         "exit_date=?, exit_time=?, exit_price=?, exit_reason=?, pnl_pct=?, "
-                        "hold_days=?, updated_at=? WHERE id=?",
-                        (date, now, round(price, 2), exit_reason, pnl, hold, now, r["id"]))
+                        "hold_days=?, updated_at=? WHERE id=? AND entry_date < ?",
+                        (date, now, round(price, 2), exit_reason, pnl, hold, now, r["id"], date))
+                    if cur.rowcount == 0:
+                        log.warning("T+1 拦截(SQL): %s 当日买入不可当日卖(entry_date=%s, date=%s)",
+                                    code, r.get("entry_date"), date)
+                        continue
                 closed += 1
                 sold.add(code)             # 标记已卖出, 同轮其余同码持仓不再卖
                 _prompt(code, r.get("name", code), "sell", r.get("strategy"),
@@ -673,10 +678,15 @@ def manual_sell(code):
     price = _price_for(code, ctx) or r["entry_price"]
     pnl = round((price / r["entry_price"] - 1) * 100, 2) if r["entry_price"] else 0
     now = _now()
-    db.execute(
-        "UPDATE ops_items SET pool='sell', status='closed', exit_date=?, exit_time=?, "
-        "exit_price=?, exit_reason='手动了结', pnl_pct=?, updated_at=? WHERE id=?",
-        (r["entry_date"], now, round(price, 2), pnl, now, r["id"]))
+    with db.tx() as con:
+        cur = con.execute(
+            "UPDATE ops_items SET pool='sell', status='closed', exit_date=?, exit_time=?, "
+            "exit_price=?, exit_reason='手动了结', pnl_pct=?, updated_at=? WHERE id=? "
+            "AND entry_date < ?",
+            (r["entry_date"], now, round(price, 2), pnl, now, r["id"], trade_date))
+        if cur.rowcount == 0:
+            return {"ok": False,
+                    "error": f"{r.get('name', code)} 为当日买入，A股 T+1：隔日方可卖出（已被数据库拦截）"}
     # 卖出后同步清除买入池里同码的其它持仓
     _clear_other_open_buys(code, r["id"])
     _prompt(code, r.get("name", code), "sell", r.get("strategy"), "手动卖出", price, "手动了结")
@@ -910,3 +920,31 @@ def add_demo_sell():
                                extra="模拟数据：用于测试卖出池结算推送，测完可在页面删除")
     return {"ok": True, "code": pick["code"], "name": pick["name"], "id": row_id,
             "pnl_pct": pnl, "push": push}
+
+
+def t1_fix_sells(rollback=False):
+    """T+1 数据修复: 找出“卖出日期<=买入日期”的真实误卖记录(排除模拟演示数据)。
+    rollback=True 时把这些卖出记录回滚为买入池持仓。"""
+    rows = db.query(
+        "SELECT * FROM ops_items WHERE pool='sell' AND exit_date IS NOT NULL "
+        "AND entry_date IS NOT NULL AND exit_date <= entry_date "
+        "AND (strategy IS NULL OR strategy != 'demo_push') "
+        "AND (note IS NULL OR note NOT LIKE '%模拟%') ORDER BY id")
+    out = [{"id": r["id"], "code": r["code"], "name": r.get("name"),
+            "entry_date": r.get("entry_date"), "exit_date": r.get("exit_date"),
+            "reason": r.get("exit_reason")} for r in rows]
+    restored = []
+    if rollback and rows:
+        now = _now()
+        for r in rows:
+            try:
+                db.execute(
+                    "UPDATE ops_items SET pool='buy', status='open', "
+                    "exit_date=NULL, exit_time=NULL, exit_price=NULL, exit_reason=NULL, "
+                    "pnl_pct=NULL, hold_days=NULL, updated_at=?, note=COALESCE(note,'')||'（T+1误卖已回滚，持仓恢复）' "
+                    "WHERE id=?", (now, r["id"]))
+                restored.append({"id": r["id"], "code": r["code"], "name": r.get("name")})
+            except Exception as e:  # noqa
+                log.warning("t1 rollback %s: %s", r["id"], e)
+        log.info("T+1 修复: 发现 %d 条当日买卖, 回滚 %d 条", len(rows), len(restored))
+    return {"ok": True, "found": out, "rollback": bool(rollback), "restored": restored}
