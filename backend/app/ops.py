@@ -4,6 +4,7 @@
 - 口径: 买入/卖出价格为提示时点的实时价(样本池行情), 盈亏按百分比口径(系统不涉及资金)
 """
 import logging
+import threading
 import time
 from datetime import datetime
 
@@ -330,9 +331,21 @@ def _clear_other_open_buys(code, keep_id, note="同码已结算, 同步清除"):
 
 
 # ---------------------------------------------------------------- 扫描
+_sweep_lock = threading.Lock()   # 互斥: 自动 sweep 与手动 flush 不能并发跑, 防“A轮刚买入→B轮卖出”竞态
+
+
 def sweep(view=None, ctx=None):
     """自动盯盘: 买点→买入池; 持仓卖点→卖出池; 模式候选→观察池。幂等、低写入。"""
     setup()
+    if not _sweep_lock.acquire(blocking=False):
+        return {"state": "busy", "reason": "上一轮扫描未结束(防并发竞态)"}
+    try:
+        return _sweep_locked(view, ctx)
+    finally:
+        _sweep_lock.release()
+
+
+def _sweep_locked(view=None, ctx=None):
     if not view or not ctx:
         view, ctx = _signal_view()
     if not view or not ctx or not ctx.get("feats"):
