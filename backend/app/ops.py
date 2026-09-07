@@ -430,15 +430,16 @@ def sweep(view=None, ctx=None):
             now = _now()
             try:
                 with db.tx() as con:
-                    # 数据库级 T+1 兜底: 当日买入(entry_date >= 交易日)的行即使被代码漏判也不会被卖出
+                    # 数据库级不变量: 只允许把“此刻仍为买入池 open 且隔日(entry<date)”的行卖入卖出池
                     cur = con.execute(
                         "UPDATE ops_items SET pool='sell', status='closed', "
                         "exit_date=?, exit_time=?, exit_price=?, exit_reason=?, pnl_pct=?, "
-                        "hold_days=?, updated_at=? WHERE id=? AND entry_date < ?",
+                        "hold_days=?, updated_at=? WHERE id=? AND pool='buy' AND status='open' "
+                        "AND entry_date < ?",
                         (date, now, round(price, 2), exit_reason, pnl, hold, now, r["id"], date))
                     if cur.rowcount == 0:
-                        log.warning("T+1 拦截(SQL): %s 当日买入不可当日卖(entry_date=%s, date=%s)",
-                                    code, r.get("entry_date"), date)
+                        log.warning("卖出被拒(非买入池持仓或T+1): %s id=%s date=%s entry=%s",
+                                    code, r["id"], date, r.get("entry_date"))
                         continue
                 closed += 1
                 sold.add(code)             # 标记已卖出, 同轮其余同码持仓不再卖
@@ -682,11 +683,11 @@ def manual_sell(code):
         cur = con.execute(
             "UPDATE ops_items SET pool='sell', status='closed', exit_date=?, exit_time=?, "
             "exit_price=?, exit_reason='手动了结', pnl_pct=?, updated_at=? WHERE id=? "
-            "AND entry_date < ?",
+            "AND pool='buy' AND status='open' AND entry_date < ?",
             (r["entry_date"], now, round(price, 2), pnl, now, r["id"], trade_date))
         if cur.rowcount == 0:
             return {"ok": False,
-                    "error": f"{r.get('name', code)} 为当日买入，A股 T+1：隔日方可卖出（已被数据库拦截）"}
+                    "error": f"{r.get('name', code)} 已不在买入池持仓或为当日买入(T+1)，卖出被拒绝"}
     # 卖出后同步清除买入池里同码的其它持仓
     _clear_other_open_buys(code, r["id"])
     _prompt(code, r.get("name", code), "sell", r.get("strategy"), "手动卖出", price, "手动了结")
@@ -948,3 +949,29 @@ def t1_fix_sells(rollback=False):
                 log.warning("t1 rollback %s: %s", r["id"], e)
         log.info("T+1 修复: 发现 %d 条当日买卖, 回滚 %d 条", len(rows), len(restored))
     return {"ok": True, "found": out, "rollback": bool(rollback), "restored": restored}
+
+
+def audit_sell_origins():
+    """审计: 卖出池每笔是否“先买后卖”。
+    依据 ops_prompts 流水(每笔真实买/卖提示都记录): 卖出记录应能在更早时间存在该代码的 buy 提示。
+    返回可疑卖出(无更早买入流水)清单, 供排查历史脏数据。"""
+    sells = db.query("SELECT id, code, name, entry_date, exit_date, strategy, signal, "
+                     "created_at FROM ops_items WHERE pool='sell' "
+                     "AND (strategy IS NULL OR strategy NOT IN ('demo_push')) "
+                     "ORDER BY id")
+    buy_ts = {}
+    for r in db.query("SELECT code, MAX(ts) t FROM ops_prompts WHERE type='buy' "
+                      "GROUP BY code"):
+        buy_ts[r["code"]] = r["t"]
+    suspicious = []
+    for s in sells:
+        has_buy_before = False
+        bt = buy_ts.get(s["code"])
+        if bt and (s.get("created_at") or s.get("exit_date") or "") >= bt:
+            has_buy_before = True
+        if not has_buy_before:
+            suspicious.append({"id": s["id"], "code": s["code"], "name": s.get("name"),
+                               "entry_date": s.get("entry_date"), "exit_date": s.get("exit_date"),
+                               "signal": s.get("signal"), "created_at": s.get("created_at")})
+    return {"ok": True, "sells_total": len(sells),
+            "without_prior_buy": suspicious}

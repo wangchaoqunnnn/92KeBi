@@ -71,3 +71,9 @@ def ops_demo_sell():
 def ops_t1_fix(rollback: int = Query(0, ge=0, le=1)):
     """T+1 修复: 查出“当日买入当日卖出”的真实记录; rollback=1 时回滚为买入池持仓"""
     return ops.t1_fix_sells(rollback=bool(rollback))
+
+
+@router.get("/admin/audit-sell")
+def ops_audit_sell():
+    """审计: 列出“卖出池中无更早买入流水”的可疑卖出(排查未买入即卖出)"""
+    return ops.audit_sell_origins()
