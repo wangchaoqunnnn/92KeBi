@@ -288,6 +288,47 @@ def _watch_codes():
         "SELECT code FROM ops_items WHERE pool='watch' AND status='open'")}
 
 
+def _sold_codes():
+    """已卖出的股票集合(卖出池存在即视为“卖过”), 用于: 禁止重复卖出/同一票再买回"""
+    return {r["code"] for r in db.query("SELECT code FROM ops_items WHERE pool='sell'")}
+
+
+def _dedupe_sell_rows():
+    """数据卫生: 同一只股票在卖出池只能保留一条(保留最早 id), 历史重复自动清理。
+    返回删除条数。静默维护, 不推送。"""
+    try:
+        dups = db.query("SELECT code, MIN(id) keep, COUNT(*) n FROM ops_items "
+                        "WHERE pool='sell' GROUP BY code HAVING COUNT(*)>1")
+        removed = 0
+        for d in dups:
+            ids = [r["id"] for r in db.query(
+                "SELECT id FROM ops_items WHERE pool='sell' AND code=? AND id<>?",
+                (d["code"], d["keep"]))]
+            for i in ids:
+                db.execute("DELETE FROM ops_items WHERE id=?", (i,))
+            removed += len(ids)
+        if removed:
+            log.info("卖出池去重: 清理重复卖出 %d 条(每票仅保留最早一条)", removed)
+        return removed
+    except Exception as e:  # noqa
+        log.warning("dedupe sell rows: %s", e)
+        return 0
+
+
+def _clear_other_open_buys(code, keep_id, note="同码已结算, 同步清除"):
+    """卖出后同步清理买入池里同代码的其它持仓(遗留脏行/重复买入), 防止同一票反复卖出"""
+    try:
+        with db.tx() as con:
+            cur = con.execute("UPDATE ops_items SET status='ignored', note=?, updated_at=? "
+                              "WHERE pool='buy' AND status='open' AND code=? AND id<>?",
+                              (note, _now(), code, keep_id))
+            n = cur.rowcount
+        if n:
+            log.info("同步清除买入池同码持仓 %s x%d", code, n)
+    except Exception as e:  # noqa
+        log.warning("clear other buys %s: %s", code, e)
+
+
 # ---------------------------------------------------------------- 扫描
 def sweep(view=None, ctx=None):
     """自动盯盘: 买点→买入池; 持仓卖点→卖出池; 模式候选→观察池。幂等、低写入。"""
@@ -301,15 +342,17 @@ def sweep(view=None, ctx=None):
     closed = 0
     watched = 0
     can_trade = _in_window()
+    _dedupe_sell_rows()                      # 卫生: 卖出池每票仅一条(清历史重复)
+    sold = _sold_codes()                     # 已卖出集合: 防重复卖出/防卖后再买
 
-    # ---- 1) 买点提示 → 买入池(仅在 09:25-14:59 交易窗口) ----
+    # ---- 1) 买点提示 → 买入池(仅在 09:25-14:59 交易窗口; 已卖出过的票不再买入) ----
     open_buys = _open_buy_codes()
     sigs = (view.get("signals") or {}).get("items") or []
     buy_sigs = [s for s in sigs if s.get("dir") == "buy"]
     if can_trade:
         for s in buy_sigs[:12]:
             code = s.get("code")
-            if not code or code in open_buys:
+            if not code or code in open_buys or code in sold:
                 continue
             price = _price_for(code, ctx) or s.get("price")
             if not price or price <= 0:
@@ -341,10 +384,17 @@ def sweep(view=None, ctx=None):
                 log.warning("buy add %s: %s", code, e)
 
     # ---- 2) 持仓卖点 → 卖出池(结算, 仅在交易窗口) ----
+    # 规则: 只卖“买入池持仓”(先买后卖); T+1 当日买入不可卖; 每只票卖出池仅一条(重复卖出跳过)
     if can_trade:
         rows = db.query("SELECT * FROM ops_items WHERE pool='buy' AND status='open'")
         for r in rows:
             code = r["code"]
+            if code in sold:            # 该票已卖出过 → 不再卖(防重复)
+                continue
+            if str(r.get("entry_date") or "") >= str(date):   # T+1: 当日买入不可当日卖
+                log.debug("T+1 拦截: %s 买入%s == 交易日%s, 次日方可卖", code,
+                          r.get("entry_date"), date)
+                continue
             f = ctx.get("feats", {}).get(code)
             if not f:
                 continue
@@ -383,6 +433,7 @@ def sweep(view=None, ctx=None):
                         "hold_days=?, updated_at=? WHERE id=?",
                         (date, now, round(price, 2), exit_reason, pnl, hold, now, r["id"]))
                 closed += 1
+                sold.add(code)             # 标记已卖出, 同轮其余同码持仓不再卖
                 _prompt(code, r.get("name", code), "sell", r.get("strategy"),
                         "卖出提示", price, exit_reason)
                 # 持仓结算 → 卖出池数据变化, 立即推送
@@ -392,6 +443,8 @@ def sweep(view=None, ctx=None):
                     _notify_sell_change(row, tag="自动结算（卖点）")
                 except Exception as e:  # noqa
                     log.warning("wechat sell push: %s", e)
+                # 卖出后同步清除买入池里该票的其它持仓(遗留/重复), 保证只结算一次
+                _clear_other_open_buys(code, r["id"])
             except Exception as e:  # noqa
                 log.warning("sell close %s: %s", code, e)
 
@@ -568,8 +621,10 @@ def ignore_item(pool, code):
     if pool == "buy":
         rows = db.query("SELECT * FROM ops_items WHERE pool='buy' AND code=? AND status='open'",
                         (code,))
-        n = db.execute("UPDATE ops_items SET status='ignored', updated_at=? "
-                       "WHERE pool='buy' AND code=? AND status='open'", (_now(), code)).rowcount
+        with db.tx() as con:
+            cur = con.execute("UPDATE ops_items SET status='ignored', updated_at=? "
+                              "WHERE pool='buy' AND code=? AND status='open'", (_now(), code))
+            n = cur.rowcount
         # 买入池数据变化 → 立即推送
         push = {"sent": 0, "reason": None}
         if n and rows:
@@ -585,24 +640,33 @@ def ignore_item(pool, code):
                 push = {"sent": 0, "reason": str(e)[:120]}
         return {"ok": True, "removed": n, "push": push}
     if pool == "watch":
-        n = db.execute("UPDATE ops_items SET status='archived', updated_at=? "
-                       "WHERE pool='watch' AND code=? AND status='open'", (_now(), code)).rowcount
+        with db.tx() as con:
+            cur = con.execute("UPDATE ops_items SET status='archived', updated_at=? "
+                              "WHERE pool='watch' AND code=? AND status='open'", (_now(), code))
+            n = cur.rowcount
         return {"ok": True, "removed": n}
     return {"ok": True, "removed": 0}
 
 
 def manual_sell(code):
-    """手动了结一笔买入池持仓(按当前价)。仅 09:25-14:59 交易时段可执行。"""
+    """手动了结一笔买入池持仓(按当前价)。仅 09:25-14:59 交易时段可执行。
+    规则同自动卖出: 先买后卖(仅持仓) · T+1 当日买入不可卖 · 每只票卖出池仅一条。"""
     setup()
     if not _in_window():
         wi = window_info()
         return {"ok": False, "error": f"仅交易时段({wi['start']}-{wi['end']})可买卖操作；当前 {wi['now']}"}
     view, ctx = _signal_view()
+    if code in _sold_codes():
+        return {"ok": False, "error": f"{code} 已在卖出池(每只股票只能卖出一次)；如需再操作请先删除该卖出记录再重新买入"}
     rows = db.query("SELECT * FROM ops_items WHERE pool='buy' AND status='open' AND code=?",
                     (code,))
     if not rows:
-        return {"ok": False, "error": "买入池中无该持仓"}
+        return {"ok": False, "error": "买入池中无该持仓(先买入才能卖出)"}
     r = rows[0]
+    trade_date = (view or {}).get("date") or _today()
+    if str(r.get("entry_date") or "") >= str(trade_date):
+        return {"ok": False,
+                "error": f"{r.get('name', code)} 为当日买入({r.get('entry_date')})，A股 T+1：隔日({trade_date}之后)方可卖出"}
     price = _price_for(code, ctx) or r["entry_price"]
     pnl = round((price / r["entry_price"] - 1) * 100, 2) if r["entry_price"] else 0
     now = _now()
@@ -610,6 +674,8 @@ def manual_sell(code):
         "UPDATE ops_items SET pool='sell', status='closed', exit_date=?, exit_time=?, "
         "exit_price=?, exit_reason='手动了结', pnl_pct=?, updated_at=? WHERE id=?",
         (r["entry_date"], now, round(price, 2), pnl, now, r["id"]))
+    # 卖出后同步清除买入池里同码的其它持仓
+    _clear_other_open_buys(code, r["id"])
     _prompt(code, r.get("name", code), "sell", r.get("strategy"), "手动卖出", price, "手动了结")
     # 持仓了结 → 卖出池数据变化, 立即推送
     row = dict(r, exit_date=r["entry_date"], exit_time=now, exit_price=round(price, 2),
@@ -783,9 +849,10 @@ def add_demo_buy():
     setup()
     taken = {r["code"] for r in db.query(
         "SELECT code FROM ops_items WHERE pool='buy' AND status='open'")}
+    taken |= _sold_codes()   # 已卖出过的票不再演示买入(遵守“只卖一次”)
     pick = next((s for s in _DEMO_STOCKS if s["code"] not in taken), None)
     if not pick:
-        return {"ok": False, "error": "示例标的均已在买入池，请先移除一条再试"}
+        return {"ok": False, "error": "示例标的均已占用(持仓/已卖出)，请先移除/删除相关记录再试"}
     now = _now()
     date = _today()
     reason = f"模拟持仓：微信推送联调（{date} {now[11:]}，测试后可点“移除”删除）"
