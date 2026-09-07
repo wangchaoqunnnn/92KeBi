@@ -344,6 +344,9 @@ def sweep(view=None, ctx=None):
     can_trade = _in_window()
     _dedupe_sell_rows()                      # 卫生: 卖出池每票仅一条(清历史重复)
     sold = _sold_codes()                     # 已卖出集合: 防重复卖出/防卖后再买
+    # 本轮开始前已存在的买入池持仓(id 快照): 本轮新买入的票绝不允许在本轮被卖出
+    pre_buy_ids = {r["id"] for r in db.query(
+        "SELECT id FROM ops_items WHERE pool='buy' AND status='open'")}
 
     # ---- 1) 买点提示 → 买入池(仅在 09:25-14:59 交易窗口; 已卖出过的票不再买入) ----
     open_buys = _open_buy_codes()
@@ -389,6 +392,9 @@ def sweep(view=None, ctx=None):
         rows = db.query("SELECT * FROM ops_items WHERE pool='buy' AND status='open'")
         for r in rows:
             code = r["code"]
+            if r["id"] not in pre_buy_ids:  # 本轮刚买入的不可能被本轮卖出(快照护栏)
+                log.debug("同轮买入保护: %s id=%s 本轮新买入, 不允许同轮卖出", code, r["id"])
+                continue
             if code in sold:            # 该票已卖出过 → 不再卖(防重复)
                 continue
             if str(r.get("entry_date") or "") >= str(date):   # T+1: 当日买入不可当日卖
