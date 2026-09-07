@@ -902,12 +902,12 @@ export default function DashboardPage({ route, params, nav, goStock }) {
         <Card><Stat label="两市成交额" value={fmtAmountYi(stats.amount_sum)} big sub="全市场成交（亿）" /></Card>
         <Card>
           <div className="stat-label">量能 · 较昨日同时段</div>
-          <div className="stat-value" style={{ fontSize: 22, marginTop: 2 }}>
+          <div className="stat-value" style={{ fontSize: 13, marginTop: 4, color: '#8fa3c0', fontWeight: 400 }}>
             {vol ? (
-              <span className={volCls}>
-                今 {fmt(vol.today_yi, 0)}亿
-                <span className="muted2" style={{ fontSize: 13, marginLeft: 8 }}>昨同期 {fmt(vol.prev_yi, 0)}亿</span>
-              </span>
+              <>
+                <span>今 {fmt(vol.today_yi, 0)}亿</span>
+                <span className="muted2" style={{ fontSize: 13, marginLeft: 10 }}>昨同期 {fmt(vol.prev_yi, 0)}亿</span>
+              </>
             ) : (
               <span className="flat">—</span>
             )}
