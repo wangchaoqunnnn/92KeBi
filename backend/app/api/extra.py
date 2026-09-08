@@ -288,6 +288,62 @@ def admin_refresh():
             "zt": v["stats"]["zt_count"], "dt": v["stats"]["dt_count"]}
 
 
+class SettingsReq(BaseModel):
+    """运行时配置(不入git): 企业微信推送 webhook 与推送点击直达地址"""
+    wechat_webhook: str = Field("", description="企业微信群机器人 Webhook URL(留空=删除该配置)")
+    page_url: str = Field("", description="点击推送消息后打开的网页地址(留空=删除该配置)")
+
+
+def _del_meta(key):
+    try:
+        db.execute("DELETE FROM meta WHERE key=?", (key,))
+    except Exception:
+        pass
+
+
+@router.get("/admin/settings")
+def admin_settings():
+    """读取当前运行时配置(webhook 脱敏显示)"""
+    from .. import ops
+    from ..config import WECHAT_PAGE_URL
+    wh = (db.meta_get("wechat_webhook") or "").strip()
+    page = (db.meta_get("wechat_page_url") or "").strip()
+    eff_page = page or WECHAT_PAGE_URL or ""
+    mask = wh if len(wh) <= 20 else wh[:18] + "…" + wh[-14:]
+    return {"ok": True,
+            "page_url": page,                 # DB里存的(配置页覆盖值)
+            "page_effective": eff_page,       # 实际生效值
+            "page_source": "db" if page else "env-default",
+            "wechat_webhook": wh,             # 原值(页面不回显, 仅提示)
+            "wechat_webhook_masked": mask if wh else "",
+            "hook_count": len(ops._hooks()),
+            "hint": "webhook 还支持环境变量 WECHAT_WEBHOOK / 文件 data/wechat_webhook.txt; "
+                    "此处保存会追加为运行期最高优先级配置。"}
+
+
+@router.post("/admin/settings")
+def admin_settings_save(req: SettingsReq):
+    """保存运行时配置(立即生效, 无需重启)"""
+    from .. import ops
+    wh = req.wechat_webhook.strip()
+    page = req.page_url.strip()
+    if wh:
+        if not wh.startswith(("http://", "https://")):
+            raise HTTPException(400, "Webhook 地址需以 http(s):// 开头")
+        db.meta_set("wechat_webhook", wh)
+    else:
+        _del_meta("wechat_webhook")
+    if page:
+        if not page.startswith(("http://", "https://")):
+            raise HTTPException(400, "跳转地址需以 http(s):// 开头")
+        db.meta_set("wechat_page_url", page)
+    else:
+        _del_meta("wechat_page_url")
+    from .. import pub_url
+    return {"ok": True, "page_effective": pub_url.ops_page_url(),
+            "hook_count": len(ops._hooks())}
+
+
 class AdvanceReq(BaseModel):
     days: int = Field(1, ge=1, le=20)
 

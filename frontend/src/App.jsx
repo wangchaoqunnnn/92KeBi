@@ -8,6 +8,7 @@ import SignalsPage from './pages/SignalsPage'
 import OpsPage from './pages/OpsPage'
 import StockPage from './pages/StockPage'
 import BacktestPage from './pages/BacktestPage'
+import SettingsPage from './pages/SettingsPage'
 import { Loading } from './components/ui'
 
 const ROUTES = [
@@ -18,6 +19,7 @@ const ROUTES = [
   { path: '/ops', label: '打板台', el: OpsPage },
   { path: '/stock', label: '个股分析', el: StockPage },
   { path: '/backtest', label: '回测中心', el: BacktestPage },
+  { path: '/settings', label: '设置', el: SettingsPage },
 ]
 
 function parseHash() {

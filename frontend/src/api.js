@@ -57,4 +57,7 @@ export const api = {
   adminRefresh: () => req('/api/admin/refresh', { method: 'POST', body: '{}' }),
   adminAdvance: (days = 1) => req('/api/admin/advance', { method: 'POST', body: JSON.stringify({ days }) }),
   probeSina: () => req('/api/admin/probe-sina', { method: 'POST', body: '{}' }),
+  adminSettings: () => req('/api/admin/settings'),
+  adminSettingsSave: (payload) => req('/api/admin/settings', { method: 'POST', body: JSON.stringify(payload) }),
+  opsPushTest: () => req('/api/ops/push-test', { method: 'POST', body: '{}' }),
 }

@@ -54,7 +54,18 @@ def current():
 
 
 def ops_page_url():
-    """打板操作台可点击地址: 环境变量 > 动态推导; 都无 → ''(此时推送不带链接, 退化为纯文本)"""
+    """打板操作台可点击地址(优先级):
+    1) DB meta wechat_page_url(配置页运行时设置, 即时生效);
+    2) 环境变量 WECHAT_PAGE_URL 或默认地址(config);
+    3) 都无 → 按最近访问来源动态推导; 再取不到 → ''(纯文本推送)。
+    """
+    try:
+        from . import db
+        v = (db.meta_get("wechat_page_url") or "").strip()
+        if v:
+            return v
+    except Exception:
+        pass
     if WECHAT_PAGE_URL:
         return WECHAT_PAGE_URL
     with _lock:
