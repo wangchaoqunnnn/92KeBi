@@ -28,6 +28,9 @@ systemd(92kebi.service, Restart=always)
 - **无需 Node.js**（前端已构建进 `backend/app/static`）
 
 ## 三、部署步骤
+> 快捷方式：全新服务器上直接执行
+> `bash <(curl -fsSL https://raw.githubusercontent.com/wangchaoqunnnn/92KeBi/main/deploy/deploy.sh) wangchaoqun.top`
+> （或先 clone 后 `sudo bash deploy/deploy.sh wangchaoqun.top`）；以下为分步手动流程。
 ```bash
 # 1. 取代码(本机示例部署目录为 /root/92KeBi; 换成你自己的绝对路径即可)
 sudo apt update && sudo apt install -y python3 python3-venv python3-pip git
