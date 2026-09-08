@@ -33,8 +33,17 @@ def _build_view():
 
 
 def _kick_bg():
-    """后台重建(单飞 + 最短间隔), 不阻塞调用方"""
+    """后台重建(单飞 + 最短间隔), 不阻塞调用方; 样本回填期间不重建, 避免磁盘I/O风暴"""
     global _bg_running, _bg_last
+    # 样本日K回填(大量I/O)进行中 → 暂停重建, HTTP 返回已有缓存
+    try:
+        from .config import DATA_SOURCE
+        if DATA_SOURCE == "real":
+            from .real import sample as _sample
+            if _sample.progress().get("state") == "running":
+                return
+    except Exception:
+        pass
     with _bg_lock:
         now = time.time()
         if _bg_running or now - _bg_last < _BG_MIN_GAP:

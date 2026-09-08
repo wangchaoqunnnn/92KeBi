@@ -635,7 +635,22 @@ def _maybe_enrich_async():
     t.start()
 
 
+_ind_stats_cache = {"key": "", "ts": 0.0, "rows": []}
+
+
 def industry_stats_full():
+    """按行业聚合全市场实时(用行业映射), 供大盘板块榜。5秒内存缓存: 每个浏览器每10s轮询
+    不再各自触发 bars 扫描/档案读取/网络请求, 显著降低磁盘与CPU压力(此前造成 499/loading)。"""
+    qd = _state.get("quote_date") or ""
+    now = time.time()
+    if _ind_stats_cache["key"] == qd and now - _ind_stats_cache["ts"] < 5:
+        return [dict(r) for r in _ind_stats_cache["rows"]]
+    rows = _industry_stats_full_impl()
+    _ind_stats_cache.update({"key": qd, "ts": now, "rows": rows})
+    return rows
+
+
+def _industry_stats_full_impl():
     """按行业聚合全市场实时(用行业映射), 供大盘板块榜"""
     ind = get_industry_cache()
     c2i = ind.get("code2industry", {})

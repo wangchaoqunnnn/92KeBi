@@ -103,12 +103,23 @@ class Scheduler:
     # ------------------------------------------------------------ 分析 + 打板扫描
     async def _analysis_loop(self):
         """按周期重建分析视图(带单飞锁)，并驱动 ops 打板台账扫描(买卖入池+微信推送)。
-        与浏览器无关：无论是否有页面访问, 只要进程存活就持续运行。"""
-        cadence = 6 if DATA_SOURCE == "mock" else 10
+        与浏览器无关：无论是否有页面访问, 只要进程存活就持续运行。
+        节流: 样本回填/爬取期间暂停全量重建(避免磁盘I/O风暴把API拖成499);
+        重建周期拉长到 ~20s(视图本身由 HTTP 端缓存+后台单飞保护)。"""
+        cadence = 6 if DATA_SOURCE == "mock" else 12
         _ops_running = False
         while _state["running"]:
             try:
-                await asyncio.to_thread(market_cache.get_view, 8.0)
+                # 样本回填(大量磁盘/网络I/O)期间: 不做全量分析, 网页走已有缓存
+                if DATA_SOURCE == "real":
+                    from ..real import sample as real_sample
+                    try:
+                        if real_sample.progress().get("state") == "running":
+                            await asyncio.sleep(cadence)
+                            continue
+                    except Exception:
+                        pass
+                await asyncio.to_thread(market_cache.get_view, 20.0)
                 _state["last_analysis"] = cn_time.now_str("%H:%M:%S")
                 # 打板台账: 买点→买入池, 卖点→卖出池, 候选→观察池
                 if not _ops_running:
