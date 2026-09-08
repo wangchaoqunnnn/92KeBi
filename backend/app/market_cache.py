@@ -66,6 +66,12 @@ def _bg_worker():
         import logging
         logging.getLogger("kb.cache").warning("background view build: %s", e)
     finally:
+        # 全量分析会分配大量临时对象, 每次构建后回收一轮, 抑制 RSS 缓慢膨胀
+        try:
+            import gc
+            gc.collect()
+        except Exception:
+            pass
         with _bg_lock:
             _bg_running = False
             _bg_last = time.time()

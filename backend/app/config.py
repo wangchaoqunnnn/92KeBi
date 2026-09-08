@@ -81,4 +81,7 @@ WECHAT_WEBHOOK = os.environ.get("WECHAT_WEBHOOK", "").strip()
 WECHAT_PAGE_URL = (os.environ.get("WECHAT_PAGE_URL", "").strip()
                    or "https://wangchaoqun.top/92kebi/#/ops")
 
+# 进程内存自愈阈值(单位MB, 0=关闭)。实测内存膨胀时自动退出由 systemd 拉起, 防止泄漏拖垮服务器。
+MEM_LIMIT_MB = float(os.environ.get("MEM_LIMIT_MB", "1200") or 0)
+
 os.makedirs(DATA_DIR, exist_ok=True)

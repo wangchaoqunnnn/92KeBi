@@ -19,11 +19,23 @@ _state = {"started_at": None, "ticks": 0, "last_tick": None, "last_analysis": No
           "poll_count": 0, "last_poll": None, "poll_error": None,
           "respawns": {}}
 
-_LOOPS = ("poll", "analysis", "daily")   # 需要看门狗守护的循环
+_LOOPS = ("poll", "analysis", "daily", "mem")   # 需要看门狗守护的循环(含内存自愈)
 
 
 def status():
     return dict(_state)
+
+
+def _rss_mb():
+    """Linux: /proc/self/status VmRSS → MB; 其它平台返回 None"""
+    try:
+        with open("/proc/self/status", "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return float(line.split()[1]) / 1024.0
+    except Exception:
+        pass
+    return None
 
 
 class Scheduler:
@@ -31,11 +43,13 @@ class Scheduler:
         self._tasks = {}
         self._polling = False
         self._crawled_today = None
+        self._mem_high_streak = 0
 
     # ------------------------------------------------------------ 任务构造/看门狗
     def _spawn(self, name):
         builder = {"poll": self._tick_loop, "analysis": self._analysis_loop,
-                   "daily": self._daily_loop, "watchdog": self._watchdog_loop}[name]
+                   "daily": self._daily_loop, "mem": self._mem_watch_loop,
+                   "watchdog": self._watchdog_loop}[name]
         t = asyncio.create_task(builder(), name=f"kb-{name}")
         self._tasks[name] = t
         _state["tasks"] = {n: (t.get_name() if not t.done() else f"{t.get_name()}(dead)")
@@ -43,7 +57,7 @@ class Scheduler:
         return t
 
     async def _watchdog_loop(self):
-        """监控三主循环: 任一异常退出 → 记日志并在30秒内重建"""
+        """监控主循环: 任一异常退出 → 记日志并在30秒内重建"""
         while _state["running"]:
             await asyncio.sleep(30)
             for name in _LOOPS:
@@ -58,6 +72,43 @@ class Scheduler:
                     log.error("scheduler loop '%s' died(%s) → auto-respawn", name, exc)
                     _state["respawns"][name] = _state["respawns"].get(name, 0) + 1
                     self._spawn(name)
+
+    async def _mem_watch_loop(self):
+        """内存自愈: 每60s查 RSS; 连续3次超限 → 记日志并退出进程(systemd Restart=always 自动拉起)。
+        样本回填等瞬时高占用不计入。"""
+        import os as _os
+        try:
+            from ..config import MEM_LIMIT_MB
+        except Exception:
+            MEM_LIMIT_MB = 0
+        while _state["running"]:
+            await asyncio.sleep(60)
+            mb = _rss_mb()
+            if mb is None:
+                continue
+            _state["mem_mb"] = round(mb, 1)
+            # 回填/爬取期间(瞬时高占用)不触发
+            in_heavy = False
+            try:
+                from ..real import sample as _sample
+                if _sample.progress().get("state") == "running":
+                    in_heavy = True
+            except Exception:
+                pass
+            if not MEM_LIMIT_MB or mb <= MEM_LIMIT_MB or in_heavy:
+                self._mem_high_streak = 0
+                continue
+            self._mem_high_streak += 1
+            log.warning("内存自愈: RSS %.0fMB 超过阈值 %.0fMB (第%d次)", mb, MEM_LIMIT_MB,
+                        self._mem_high_streak)
+            if self._mem_high_streak >= 3:
+                log.error("内存持续超限 → 主动退出, 由 systemd 拉起重启(疑似泄漏) RSS=%.0fMB", mb)
+                try:
+                    import gc
+                    gc.collect()
+                except Exception:
+                    pass
+                _os._exit(0)
 
     # ------------------------------------------------------------ mock 模式
     async def _tick_loop(self):
