@@ -107,3 +107,18 @@ py run.py
 本策略体系（含需求表、仓位建议、买卖信号、回测）仅供学习与研究，**不构成任何投资建议**。
 题材预判本质是主观能力，系统只能“能量化的量化、不能量化的给参考”；实盘数据可能存在延迟或误差，
 主观评分（逻辑硬关键词近似、题材热度代理）务必人工复核；最终决策与风险请自负。
+
+## 七、服务器部署与更新标准动作（systemd 守护）
+
+**每次更新代码后的标准动作：**
+```bash
+cd /root/92KeBi && git pull origin main
+sudo systemctl restart 92kebi
+sudo systemctl status 92kebi --no-pager
+```
+
+- 前端构建产物随仓库提交（`backend/app/static`），正常更新**无需在服务器重新构建**；
+- 若前端源码有改动且未提交到 GitHub，才需先在服务器执行：`cd frontend && pnpm install && pnpm build`；
+- 首次部署到全新服务器请见 `docs/DEPLOY_CLOUD.md`，或直接执行 `sudo bash deploy/deploy.sh wangchaoqun.top`；
+- 服务已配置：开机自启、崩溃自动拉起、内存超限自愈重启、启动/停止超时放宽（900s/300s）；
+- 实时查看日志：`sudo journalctl -u 92kebi -f --no-pager`。
