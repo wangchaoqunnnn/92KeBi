@@ -104,17 +104,26 @@ export function ConditionList({ items, dense = false }) {
 
 /* ---------------- 表格表头排序 ----------------
  * 用法:
- *   const sort = useTableSort('score')          // {key, dir, toggle}
- *   <table> <thead><tr>
- *     <SortTh label="评分" sortKey="score" sort={sort} />
- *   ... rows = sortRows(rows, sort.key, sort.dir)
+ *   const sort = useTableSort('score')          // {key, dir, toggle} 两态: ▲倒序↔▲正序
+ *   const sort = useTableSort(null, true)       // 三态: 点击循环 正序→倒序→恢复默认(不排序)
+ *   <SortTh label="评分" sortKey="score" sort={sort} />
+ *   rows = sortRows(rows, sort.key, sort.dir)
  */
-export function useTableSort(defaultKey = null) {
+export function useTableSort(defaultKey = null, threeState = false) {
   const [key, setKey] = useState(defaultKey)
   const [dir, setDir] = useState('desc')
   const toggle = (k) => {
-    if (k === key) setDir((d) => (d === 'asc' ? 'desc' : 'asc'))
-    else { setKey(k); setDir('desc') }
+    if (k === key) {
+      if (threeState) {
+        // 三态循环: asc → desc → null(默认) → asc ...
+        setDir((d) => (d === 'asc' ? 'desc' : d === 'desc' ? null : 'asc'))
+      } else {
+        setDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+      }
+    } else {
+      setKey(k)
+      setDir(threeState ? 'asc' : 'desc')
+    }
   }
   return { key, dir, toggle }
 }

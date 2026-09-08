@@ -31,7 +31,7 @@ export default function OpsPage({ route, params, nav, goStock }) {
 
   const bSort = useTableSort('entry_time')
   const sSort = useTableSort('exit_time')
-  const wSort = useTableSort('score')
+  const wSort = useTableSort(null, true)   // 观察池三态: 点击=正序→倒序→恢复默认
   const buys = sortRows((data?.buy) || [], bSort.key, bSort.dir)
   const sells = sortRows((data?.sell) || [], sSort.key, sSort.dir)
   const watch = sortRows((data?.watch) || [], wSort.key, wSort.dir)
@@ -364,7 +364,7 @@ export default function OpsPage({ route, params, nav, goStock }) {
                     <SortTh label="名称" sortKey="name" sort={wSort} />
                     <SortTh label="评分" sortKey="score" sort={wSort} />
                     <SortTh label="最近记录" sortKey="updated_at" sort={wSort} />
-                    <th>记录日期</th>
+                    <SortTh label="记录日期" sortKey="last_date" sort={wSort} />
                     <th>观察理由</th>
                     <th>操作</th>
                   </tr></thead>
