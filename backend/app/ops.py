@@ -502,11 +502,18 @@ def _sweep_locked(view=None, ctx=None):
     existing = db.query("SELECT code, reason, last_date FROM ops_items "
                         "WHERE pool='watch' AND status='open'")
     exist_map = {r["code"]: r for r in existing}
+    # 当日已被“状态/卖点”剔除过的候选: 同一天不再自动加回(防止 每10s 剔除↔加回 抖动)
+    today0 = (date or _today()) + " 00:00:00"
+    removed_today = {r["code"] for r in db.query(
+        "SELECT code FROM ops_items WHERE pool='watch' AND status='archived' "
+        "AND updated_at>=? AND reason LIKE '剔除:%'", (today0,))}
     seen = set()
     for code, (name, sector, txt, score) in watch_need.items():
         if code in seen:
             continue
         seen.add(code)
+        if code in removed_today:
+            continue  # 当日剔除过的, 明日再看
         cur = exist_map.get(code)
         now = _now()
         if cur and cur["reason"] == txt and cur["last_date"] == date:
@@ -526,9 +533,44 @@ def _sweep_locked(view=None, ctx=None):
             watched += 1
         except Exception as e:  # noqa
             log.warning("watch add %s: %s", code, e)
+
+    # ---- 观察池维护: 每天实时扫描, 出现卖点/状态恶化 → 及时剔除(归档) ----
+    # 仅剔除“实质破位/走坏”的信号(白名单); “流动性预警”等警示级不剔除(候选需盯盘确认)
+    WATCH_DROP_SIGNALS = {"龙头断板即撤", "一致转分歧(高开出货)", "不及预期即走", "加速即卖",
+                          "板块退潮离场", "龙头倒下, 逻辑失效", "题材未发酵, 离场",
+                          "试错失败", "触及止损纪律"}
+    removed_watch = 0
+    feats = (ctx or {}).get("feats") or {}
+    for rw in db.query("SELECT * FROM ops_items WHERE pool='watch' AND status='open'"):
+        code = rw["code"]
+        drop = None
+        f = feats.get(code)
+        if f:
+            t = f.get("today") or {}
+            try:
+                from .core import signals as sig_mod
+                sigs2 = sig_mod.for_stock(code, f, ctx)
+                sell = next((s for s in sigs2 if s.get("dir") == "sell"
+                             and s.get("signal") in WATCH_DROP_SIGNALS), None)
+                if sell:
+                    drop = f"剔除：卖点[{sell.get('signal')}] {sell.get('reason')}"
+            except Exception as e:  # noqa
+                log.warning("watch eval %s: %s", code, e)
+            if not drop:
+                pct = t.get("pct")
+                if t.get("limit_down") or (pct is not None and pct <= -6.5):
+                    drop = f"剔除：状态恶化 今日{pct}%" + ("（跌停）" if t.get("limit_down") else "")
+        if drop:
+            try:
+                now2 = _now()
+                db.execute("UPDATE ops_items SET status='archived', reason=?, updated_at=? "
+                           "WHERE id=? AND status='open'", (drop, now2, rw["id"]))
+                removed_watch += 1
+                _prompt(code, rw.get("name", code), "watch", None, "观察剔除", None, drop)
+                log.info("观察剔除 %s %s: %s", code, rw.get("name"), drop[:60])
+            except Exception as e:  # noqa
+                log.warning("watch remove %s: %s", code, e)
     # 观察过期: 不在候选且 >5 个自然日未更新 → 归档
-    stale = [r["id"] for r in db.query(
-        "SELECT id, last_date FROM ops_items WHERE pool='watch' AND status='open'")]
     for r in db.query("SELECT id, last_date FROM ops_items WHERE pool='watch' AND status='open'"):
         try:
             from . import cn_time
@@ -539,7 +581,8 @@ def _sweep_locked(view=None, ctx=None):
         except Exception:
             pass
     return {"state": "done", "date": date, "opened": opened, "closed": closed,
-            "watched": watched, "watch_total": len(watch_need),
+            "watched": watched, "watch_removed": removed_watch,
+            "watch_total": len(watch_need),
             "window": window_info()}
 
 
