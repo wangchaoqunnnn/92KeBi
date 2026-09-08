@@ -415,26 +415,44 @@ def _sweep_locked(view=None, ctx=None):
                           r.get("entry_date"), date)
                 continue
             f = ctx.get("feats", {}).get(code)
-            if not f:
-                continue
-            today = f.get("today") or {}
-            if today.get("limit_up"):
+            today = (f or {}).get("today") or {}
+            # 实时行情(不依赖特征表; 即使该票不在样本/特征里, 止损强卖也必须执行)
+            quote = None
+            try:
+                if DATA_SOURCE == "real":
+                    from .real import market as real_mkt
+                    quote = (real_mkt.snapshot().get("quotes") or {}).get(code)
+            except Exception:
+                pass
+            if not f and quote is None:
+                continue  # 无任何实时依据, 跳过(如停牌)
+            is_limit = bool((quote or {}).get("zt")) or bool(today.get("limit_up"))
+            if is_limit:
                 # 今日涨停: 强势, 任何卖点(含止损纪律)不执行, 不提示卖出
                 continue
-            price = _price_for(code, ctx) or today.get("close")
+            price = _price_for(code, ctx) or (quote or {}).get("price") \
+                or today.get("close")
             if not price or price <= 0:
                 continue
             entry = r["entry_price"] or price
             exit_reason = None
-            # 卖出理由优先: 止损线 / 规则引擎卖出信号
-            if price <= entry * (1 - 0.05):
+            # 优先强卖: 已破止损线 → 必须卖(任何周期复核发现即补执行, 不因“错过”而豁免)
+            if entry and price <= entry * (1 - 0.05):
                 exit_reason = f"止损(-5%)：现价 {price:.2f} ≤ 买入 {entry:.2f}×0.95"
             else:
-                from .core import signals as sig_mod
-                sigs2 = sig_mod.for_stock(code, f, ctx)
-                sell = next((s for s in sigs2 if s.get("dir") == "sell"), None)
-                if sell:
-                    exit_reason = f"{sell.get('signal')}：{sell.get('reason')}"
+                if not f:
+                    # 无特征时仅处理实时大幅跳水(≤-7%)的必须卖场景
+                    pct = (quote or {}).get("pct")
+                    if pct is not None and pct <= -7:
+                        exit_reason = f"实时大幅下挫 {pct}% → 必须离场"
+                    else:
+                        continue
+                else:
+                    from .core import signals as sig_mod
+                    sigs2 = sig_mod.for_stock(code, f, ctx)
+                    sell = next((s for s in sigs2 if s.get("dir") == "sell"), None)
+                    if sell:
+                        exit_reason = f"{sell.get('signal')}：{sell.get('reason')}"
             if not exit_reason:
                 continue
             # 持有天数(自然日, 北京时间)
