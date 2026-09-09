@@ -573,13 +573,19 @@ export default function DashboardPage({ route, params, nav, goStock }) {
   const [ztMap, setZtMap] = useState({})
   const [ztBusy, setZtBusy] = useState(false)
   const [ztErr, setZtErr] = useState(null)
+  /* 板块强弱榜(涨幅前10/跌幅后10): 页面存活期间每 20s 拉实时, 保证盘中数据跟着行情刷新 */
   useEffect(() => {
     let on = true
-    api.sectors()
-      .then((d) => { if (on) setSecRows(d.rows || []) })
-      .catch(() => { /* 保留已有数据 */ })
-    return () => { on = false }
-  }, [ov && ov.date])
+    const load = () => {
+      if (!on) return
+      api.sectors()
+        .then((d) => { if (on) setSecRows(d.rows || []) })
+        .catch(() => { /* 保留已有数据 */ })
+    }
+    load()
+    const t = setInterval(load, 20000)
+    return () => { on = false; clearInterval(t) }
+  }, [])
   const toggleZt = (sector) => {
     if (ztOpen === sector) { setZtOpen(null); return }
     setZtOpen(sector)
