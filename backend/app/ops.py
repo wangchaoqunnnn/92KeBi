@@ -517,7 +517,7 @@ def _sweep_locked(view=None, ctx=None):
         txt = f"[{warn}] {conds_ok}/6 条条件成立"
         watch_need[code] = (l.get("name", code), l.get("sector"), txt, l.get("score"))
 
-    existing = db.query("SELECT code, reason, last_date FROM ops_items "
+    existing = db.query("SELECT id, code, reason, last_date FROM ops_items "
                         "WHERE pool='watch' AND status='open'")
     exist_map = {r["code"]: r for r in existing}
     # 当日已被“状态/卖点”剔除过的候选: 同一天不再自动加回(防止 每10s 剔除↔加回 抖动)

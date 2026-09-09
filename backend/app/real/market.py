@@ -317,16 +317,30 @@ def _store_refresh(quotes, src, ms, full):
     with _lock:
         today_zt = [{"code": c, "name": q["name"]} for c, q in quotes.items() if q["zt"]]
         today_dt = [{"code": c, "name": q["name"]} for c, q in quotes.items() if q["dt"]]
-        # 行情日期: 从任意样例ticktime推导(腾讯), 否则本地交易日
+        # 行情日期: 优先从行情时间戳推导(部分源如腾讯带ticktime);
         quote_date = _state.get("quote_date") or date.today().strftime("%Y-%m-%d")
+        tick_date = None
         try:
             t = next((q["ticktime"] for q in quotes.values() if q.get("ticktime")), "")
             m = re.search(r"\d{4}-\d{2}-\d{2}", t) or re.search(r"\d{8}", t)
             if m:
                 s = m.group(0)
-                quote_date = f"{s[0:4]}-{s[4:6]}-{s[6:8]}" if len(s) == 8 else s
+                tick_date = f"{s[0:4]}-{s[4:6]}-{s[6:8]}" if len(s) == 8 else s
         except Exception:
             pass
+        if tick_date:
+            quote_date = tick_date
+        else:
+            # 快源(如腾讯)无时间戳时: 交易时段内用“北京当日 + 新浪指数5分钟K存在当日”校验滚动,
+            # 避免日期永远停留在上一交易日(整页显示旧数据)。
+            try:
+                from . import cn_time as _ct
+                if quote_date != _ct.today_str() and _ct.is_weekday() and 925 <= _ct.hm() <= 1505:
+                    days = intraday.idx_days()
+                    if days and _ct.today_str() in days:
+                        quote_date = _ct.today_str()
+            except Exception:
+                pass
         prev_date = _state.get("quote_date") or ""
         _state["quotes"] = quotes
         _state["quote_date"] = quote_date
