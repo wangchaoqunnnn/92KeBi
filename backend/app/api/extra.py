@@ -259,7 +259,9 @@ def admin_status():
                       "sources": src_router.health_status(),
                       "enrich": real_mkt.enrich_status(),
                       "industry_source": (_ind or {}).get("source") or "",
-                      "industry_codes": len((_ind or {}).get("code2industry", {}))}
+                      "industry_codes": len((_ind or {}).get("code2industry", {})),
+                      "board_coverage": real_mkt.board_coverage(),
+                      "universe_coverage": real_mkt.universe_coverage()}
     else:
         st["live"] = mock_live.state()
     return st

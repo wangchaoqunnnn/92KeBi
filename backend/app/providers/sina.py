@@ -258,20 +258,23 @@ def today_str():
 
 # ---------------------------------------------------------------- 涨跌停判定
 def limit_rate(code, name):
-    """涨跌幅限制: 主板10% / 创业(300,301)科创(688,689)20% / ST 5%(主板口径)
-    北交所/新上市(前缀 N/C) 单独处理(不参与涨停判定)"""
+    """涨跌幅限制: 主板10% / 创业(300,301,302)科创(688,689)20% / 北交所(4,8,92)30% / ST 5%(主板口径)"""
     c = str(code).zfill(6)
     n = (name or "").upper()
-    if c.startswith(("300", "301", "688", "689")):
+    if c.startswith(("300", "301", "302", "303", "688", "689")):
         return 0.20
+    if c.startswith(("4", "8", "92")):      # 北交所 30%
+        return 0.30
     if "ST" in n and c.startswith(("000", "001", "002", "003", "600", "601", "603", "605")):
         return 0.05
     return 0.10
 
 
 def is_new_listing(code, name):
+    """新股/退市: 仅按名称前缀判断(N=新股首日, C=次新, 退=退市整理)。
+    注意: 北交所(4/8/92)属于正常交易板块, 绝不能当成“新上市”排除。"""
     n = (name or "").strip().upper()
-    return n.startswith(("N", "C", "退")) or str(code).startswith(("4", "8", "92"))
+    return n.startswith(("N", "C", "退"))
 
 
 def is_limit_up(price, pre_close, rate):

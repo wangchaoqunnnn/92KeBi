@@ -159,6 +159,13 @@ def health():
             d["market"] = {"quote_date": snap.get("quote_date"), "state": snap.get("state"),
                            "zt": mkt.get("zt"), "universe": mkt.get("universe"),
                            "amount_yi": mkt.get("amount_yi"), "src": snap.get("src")}
+            # 板块覆盖审计(确保沪主板/科创板/深主板/创业板/北交所全覆盖)
+            try:
+                bc = real_mkt.board_coverage()
+                d["market"]["boards"] = {k: v["n"] for k, v in (bc.get("boards") or {}).items()}
+                d["market"]["boards_total"] = bc.get("total")
+            except Exception:
+                pass
             d["ops_window"] = ops.window_info()
             d["wechat"] = ops._wechat_status()
         except Exception as e:  # noqa

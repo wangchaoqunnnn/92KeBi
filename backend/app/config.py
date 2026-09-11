@@ -23,6 +23,8 @@ REAL_KLINE_URL = ("https://quotes.sina.cn/cn/api/json_v2.php/"
 # 分析/回测/历史使用的“实时样本池”：按当日成交额取前 N 只(真实历史行情/情绪历史/回测仅覆盖样本池，
 # 全市场当日实时统计另做大盘卡展示)。接入更完整数据后可调大(建议 500~1500)。
 REAL_CRAWL_N = int(os.environ.get("REAL_CRAWL_N", "500"))
+# 样本池各板块保底只数(沪主板/深主板/创业板/科创板/北交所): 确保北交所等小板块不被成交额筛选整块遗漏
+REAL_SAMPLE_PER_BOARD = int(os.environ.get("REAL_SAMPLE_PER_BOARD", "40"))
 REAL_CRAWL_DAYS = int(os.environ.get("REAL_CRAWL_DAYS", "520"))
 REAL_CRAWL_CONCURRENCY = int(os.environ.get("REAL_CRAWL_CONCURRENCY", "8"))
 # 行业成员关系缓存刷新间隔(秒)

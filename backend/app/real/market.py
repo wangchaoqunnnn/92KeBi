@@ -560,7 +560,7 @@ def _store_refresh(quotes, src, ms, full):
         _state["mkt_stats"] = {
             "universe": len(quotes), "bj": bj,
             "zt": len(today_zt), "dt": len(today_dt),
-            "up": up - bj, "down": down, "amount_yi": round(amt, 1),
+            "up": up, "down": down, "amount_yi": round(amt, 1),
             "quote_date": quote_date, "explosion": _state["explosion"],
             "premium_end": _state["premium_end"], "premium_open": _state["premium_open"],
             "max_streak": max(_state["today_ladder"].values()) if _state["today_ladder"] else 0,
@@ -805,6 +805,50 @@ def _maybe_enrich_async():
 
 
 _ind_stats_cache = {"key": "", "ts": 0.0, "rows": []}
+
+
+def board_of(code):
+    """6位代码 → 板块归属(用于覆盖审计, 确保主板/创业板/科创板/北交所全覆盖)"""
+    c = str(code)
+    if c.startswith(("688", "689")):
+        return "科创板"
+    if c.startswith(("300", "301", "302", "303")):
+        return "创业板"
+    if c.startswith(("600", "601", "603", "605")):
+        return "沪主板"
+    if c.startswith(("000", "001", "002", "003")):
+        return "深主板"
+    if c.startswith(("4", "8", "92")):
+        return "北交所"
+    if c.startswith(("900", "200")):
+        return "B股"
+    return "其他"
+
+
+def board_coverage(quotes=None):
+    """各交易所/板块覆盖审计: {板块: {n, zt, amount_yi}} + 合计"""
+    qs = quotes if quotes is not None else (_state.get("quotes") or {})
+    out = {}
+    total = 0
+    for c, q in qs.items():
+        b = board_of(c)
+        d = out.setdefault(b, {"n": 0, "zt": 0, "amount_yi": 0.0})
+        d["n"] += 1
+        if (q or {}).get("zt"):
+            d["zt"] += 1
+        d["amount_yi"] = round(d["amount_yi"] + ((q or {}).get("amount") or 0) / 1e8, 1)
+        total += 1
+    return {"total": total, "boards": out}
+
+
+def universe_coverage():
+    """内置/最近成员名单的板块覆盖(离线审计)"""
+    rows = _load_members() or _load_universe()
+    out = {}
+    for r in rows:
+        b = board_of(r["code"])
+        out[b] = out.get(b, 0) + 1
+    return {"total": len(rows), "boards": out}
 
 
 def industry_stats_full():

@@ -22,20 +22,41 @@ def progress():
 
 
 def _pick_sample(quotes):
-    """quotes: code->quote。按成交额降序取前N(沪深, 排除新股/北交所/停牌)"""
+    """quotes: code->quote。样本池 = 各板块保底(默认40只/板块) + 余额按成交额降序补足N。
+    覆盖: 沪主板/深主板/创业板/科创板/北交所(不再整块排除北交所); 仅排除新股与无成交。"""
+    from ..config import REAL_SAMPLE_PER_BOARD
+    from .market import board_of
+    boards = ("沪主板", "深主板", "创业板", "科创板", "北交所")
     cand = []
     for c, q in quotes.items():
-        name = q["name"]
-        if c.startswith(("4", "8", "92")) or sina.is_new_listing(c, name):
+        name = q.get("name") or c
+        if sina.is_new_listing(c, name):
             continue
-        amt = q["amount"] or 0
+        amt = q.get("amount") or 0
         if amt <= 0:
             continue
-        cand.append((c, q, amt))
+        cand.append((c, q, amt, board_of(c)))
     cand.sort(key=lambda x: -x[2])
-    top = cand[:REAL_CRAWL_N]
+    picked, seen, quota = [], set(), {b: 0 for b in boards}
+    # 1) 各板块保底配额(北交所等小板块先行保留)
+    for c, q, amt, b in cand:
+        if b in quota and quota[b] < REAL_SAMPLE_PER_BOARD and c not in seen:
+            seen.add(c)
+            quota[b] += 1
+            picked.append((c, q, amt))
+            if len(picked) >= REAL_CRAWL_N:
+                break
+    # 2) 余下名额按成交额补足
+    for c, q, amt, b in cand:
+        if len(picked) >= REAL_CRAWL_N:
+            break
+        if c in seen:
+            continue
+        seen.add(c)
+        picked.append((c, q, amt))
+    picked.sort(key=lambda x: -x[2])
     out = []
-    for c, q, _ in top:
+    for c, q, amt in picked:
         out.append({
             "code": c, "name": q["name"],
             "amount_yi": round((q["amount"] or 0) / 1e8, 2),
