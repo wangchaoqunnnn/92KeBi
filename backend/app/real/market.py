@@ -269,27 +269,49 @@ def _make_quote(code, name, symbol, price, settle, op, high, low, volume, amount
 
 
 def _acq_full():
-    """新浪行情中心全量(成分+行情, 约3~5s)。返回 (quotes, source, latency_ms)"""
+    """全市场快照: 新浪行情中心为主, 被限流(456)时自动改用东方财富; 返回 (quotes, source, latency_ms)"""
     t0 = time.time()
-    rows = sina.fetch_members_fast("hs_a", threads=10)
-    if not rows or len(rows) < 100:
-        # 限流(456)等导致静默空页: 视为失败, 交由快速源/成员快照兜底, 避免写入空快照
-        raise ConnectionError(f"全市场成分获取为空(rows={len(rows)}, 可能被限流)")
+    rows, src = [], "sina_market"
+    try:
+        rows = sina.fetch_members_fast("hs_a", threads=10)
+        if not rows or len(rows) < 100:
+            raise ConnectionError(f"新浪全市场为空(rows={len(rows)}, 可能456限流)")
+    except Exception as e:  # noqa
+        log.warning("新浪全市场失败(%s) → 尝试东方财富", str(e)[:100])
+        rows = []
+    if rows:
+        quotes = {}
+        for r in rows:
+            code = r["code"]
+            if not code:
+                continue
+            quotes[code] = _make_quote(code, r["name"], r.get("symbol", sina.to_symbol(code)),
+                                       r.get("trade"), r.get("settlement"), r.get("open"),
+                                       r.get("high"), r.get("low"), r.get("volume"),
+                                       r.get("amount"), turnover=r.get("turnoverratio"),
+                                       nmc=r.get("nmc"), mktcap=r.get("mktcap"),
+                                       per=r.get("per"), pb=r.get("pb"))
+            if quotes[code]["pct"] is None and r.get("changepercent") is not None:
+                quotes[code]["pct"] = r["changepercent"]
+        _save_members(rows)
+        return quotes, src, (time.time() - t0) * 1000
+    # ---------------- 备用: 东方财富全市场 ----------------
+    from ..providers import eastmoney as em
+    erows = em.fetch_all_quotes()
+    if not erows or len(erows) < 500:
+        raise ConnectionError("新浪与东方财富全市场快照均失败")
     quotes = {}
-    for r in rows:
+    for r in erows:
         code = r["code"]
-        if not code:
-            continue
-        quotes[code] = _make_quote(code, r["name"], r.get("symbol", sina.to_symbol(code)),
-                                   r.get("trade"), r.get("settlement"), r.get("open"),
-                                   r.get("high"), r.get("low"), r.get("volume"),
-                                   r.get("amount"), turnover=r.get("turnoverratio"),
-                                   nmc=r.get("nmc"), mktcap=r.get("mktcap"),
-                                   per=r.get("per"), pb=r.get("pb"))
-        if quotes[code]["pct"] is None and r.get("changepercent") is not None:
-            quotes[code]["pct"] = r["changepercent"]
-    _save_members(rows)
-    return quotes, "sina_market", (time.time() - t0) * 1000
+        quotes[code] = _make_quote(code, r["name"], r["symbol"], r["price"], r["pre_close"],
+                                   r["open"], r["high"], r["low"], r.get("volume"),
+                                   r.get("amount"), turnover=r.get("turnover"),
+                                   nmc=r.get("nmc"), mktcap=r.get("mktcap"))
+        if quotes[code]["pct"] is None and r.get("pct") is not None:
+            quotes[code]["pct"] = r["pct"]
+    _save_members(erows)
+    log.warning("新浪不可用 → 已切换东方财富全市场快照(%d只)", len(quotes))
+    return quotes, "eastmoney_market", (time.time() - t0) * 1000
 
 
 def _acq_fast():

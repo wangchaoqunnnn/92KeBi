@@ -110,3 +110,77 @@ def fetch_industry_map(threads=6):
     log.info("eastmoney industry map: %d industries, %d stocks",
              len(out), sum(len(v) for v in out.values()))
     return out
+
+
+# ---------------------------------------------------------------- 全市场快照(新浪被限流时的备用行情源)
+# fs 覆盖: 深主板/创业板/沪主板/科创板/北交所
+_QS = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048"
+_FIELDS = "f12,f13,f14,f2,f3,f15,f16,f17,f18,f5,f6,f8,f20,f21"
+
+
+def _num(v, nd=2):
+    try:
+        if v in ("-", None, ""):
+            return None
+        return round(float(v), nd)
+    except Exception:
+        return None
+
+
+def _symbol(code, mkt):
+    if str(code).startswith(("4", "8", "92")):
+        return "bj" + str(code)
+    return ("sh" if str(mkt) == "1" else "sz") + str(code)
+
+
+def _fetch_page(pn, pz=200):
+    rows = _diff(_get({"pn": pn, "pz": pz, "po": 0, "np": 1, "fltt": 2, "invt": 2,
+                       "fid": "f12", "fs": _QS, "fields": _FIELDS}))
+    return rows
+
+
+def fetch_all_quotes(max_pages=40, threads=8):
+    """东财全市场A股快照 → [{code,name,symbol,price,pct,open,high,low,pre_close,
+    volume,amount,turnover,nmc,mktcap}]; 失败返回 []"""
+    try:
+        first = _fetch_page(1)
+    except Exception as e:  # noqa
+        log.warning("eastmoney all quotes p1: %s", e)
+        return []
+    if not first:
+        return []
+    rows = list(first)
+    total = 0
+    try:
+        d = (_get({"pn": 1, "pz": 1, "po": 0, "np": 1, "fltt": 2, "invt": 2,
+                   "fid": "f12", "fs": _QS, "fields": "f12"}) or {}).get("data") or {}
+        total = int(d.get("total") or 0)
+    except Exception:
+        pass
+    pages = min(max_pages, max(1, (total + 199) // 200)) if total else max_pages
+    if pages > 1:
+        with ThreadPoolExecutor(max(2, min(threads, 10))) as ex:
+            futs = [ex.submit(_fetch_page, pn) for pn in range(2, pages + 1)]
+            for fu in as_completed(futs):
+                try:
+                    rows += fu.result() or []
+                except Exception:
+                    pass
+    out = []
+    seen = set()
+    for r in rows:
+        code = str(r.get("f12") or "").zfill(6)
+        if len(code) != 6 or not code.isdigit() or code in seen:
+            continue
+        seen.add(code)
+        out.append({
+            "code": code, "name": r.get("f14") or code,
+            "symbol": _symbol(code, r.get("f13")),
+            "price": _num(r.get("f2")), "pct": _num(r.get("f3")),
+            "high": _num(r.get("f15")), "low": _num(r.get("f16")),
+            "open": _num(r.get("f17")), "pre_close": _num(r.get("f18")),
+            "volume": r.get("f5"), "amount": r.get("f6"),
+            "turnover": _num(r.get("f8")), "mktcap": r.get("f20"), "nmc": r.get("f21"),
+        })
+    log.info("eastmoney all quotes: %d stocks (total=%s)", len(out), total)
+    return out
