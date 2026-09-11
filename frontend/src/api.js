@@ -60,4 +60,5 @@ export const api = {
   adminSettings: () => req('/api/admin/settings'),
   adminSettingsSave: (payload) => req('/api/admin/settings', { method: 'POST', body: JSON.stringify(payload) }),
   opsPushTest: () => req('/api/ops/push-test', { method: 'POST', body: '{}' }),
+  refreshNow: () => req('/api/ops/refresh-now', { method: 'POST', body: '{}' }),
 }

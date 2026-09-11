@@ -35,6 +35,27 @@ export default function App() {
   const [q, setQ] = useState('')
   const [results, setResults] = useState([])
   const [searching, setSearching] = useState(false)
+  const [tick, setTick] = useState(0)        // 手动“立即更新”成功后 +1 → 当前页面整体重挂载拉新数据
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshMsg, setRefreshMsg] = useState('')
+
+  const refreshNow = async () => {
+    if (refreshing) return
+    setRefreshing(true)
+    setRefreshMsg('强制更新中…')
+    try {
+      const d = await api.refreshNow()
+      setRefreshMsg(`已更新 · ${d.quote_date || d.date || ''} · 涨停${d.zt ?? '—'} 跌停${d.dt ?? '—'}` +
+        ` · 新买入${d.opened ?? 0} 结算${d.closed ?? 0} · ${d.elapsed_s ?? '?'}s`)
+      setTick((t) => t + 1)                   // 触发当前页面重挂载, 所有数据重新拉取
+      api.meta().then(setMeta).catch(() => {})
+      setTimeout(() => setRefreshMsg(''), 8000)
+    } catch (e) {
+      setRefreshMsg(`更新失败：${String(e?.message || e).slice(0, 120)}`)
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   useEffect(() => {
     const onHash = () => setRoute(parseHash())
@@ -105,6 +126,15 @@ export default function App() {
             })}
           </nav>
           <div className="top-right">
+            <button
+              className="btn btn-sm"
+              onClick={refreshNow}
+              disabled={refreshing}
+              title="立即强制拉取最新行情、重算全量分析并立刻判定买卖点"
+            >
+              {refreshing ? '更新中…' : '⟳ 立即更新'}
+            </button>
+            {refreshMsg && <span className="muted small" style={{ maxWidth: 260 }}>{refreshMsg}</span>}
             <div className="searchbox">
               <input
                 placeholder="搜代码/名称，如 幻视影视"
@@ -133,7 +163,7 @@ export default function App() {
       </header>
 
       <main className="main">
-        <Page key={matched.path} {...pageProps} />
+        <Page key={`${matched.path}:${tick}`} {...pageProps} />
       </main>
 
       <footer className="footer risk-note">

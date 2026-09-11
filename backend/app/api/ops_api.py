@@ -13,6 +13,43 @@ def _clear_ov_cache():
     _ov_cache["val"] = None
 
 
+@router.post("/refresh-now")
+def ops_refresh_now():
+    """一键强制更新: 立即拉最新行情 → 立刻重建全量分析 → 立即跑打板扫描判买卖点。
+    各页面顶栏“立即更新”按钮调用。返回本次刷新结果摘要。"""
+    import time as _t
+    from .. import market_cache
+    from ..config import DATA_SOURCE
+    t0 = _t.time()
+    quote = {}
+    if DATA_SOURCE == "real":
+        from ..real import market as real_mkt
+        try:
+            real_mkt.refresh_quotes()                    # 强制拉最新全市场快照
+            quote = real_mkt.snapshot().get("mkt_stats") or {}
+        except Exception as e:  # noqa
+            quote = {"error": str(e)[:120]}
+        try:
+            real_mkt.ensure_industry_cache(force=True)   # 顺手强刷行业映射(失败自动回退)
+        except Exception:
+            pass
+    view = market_cache.force_refresh()                  # 同步等待全量分析完成
+    ctx = market_cache.get_ctx()
+    res = ops.sweep(view=view, ctx=ctx)                  # 立即判买卖点并入池
+    _clear_ov_cache()
+    st = (view or {}).get("stats") or {}
+    return {"ok": True,
+            "elapsed_s": round(_t.time() - t0, 1),
+            "date": (view or {}).get("date"),
+            "phase": ((view or {}).get("phase") or {}).get("phase_cn"),
+            "quote_date": quote.get("quote_date"),
+            "zt": st.get("zt_count"), "dt": st.get("dt_count"),
+            "amount_yi": st.get("amount_sum"),
+            "opened": res.get("opened"), "closed": res.get("closed"),
+            "watch_added": res.get("watched"), "watch_removed": res.get("watch_removed"),
+            "state": res.get("state"), "window": res.get("window")}
+
+
 @router.get("/overview")
 def ops_overview():
     import time as _t
