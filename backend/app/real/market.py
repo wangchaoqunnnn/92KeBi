@@ -171,6 +171,25 @@ def _load_members():
         return []
 
 
+UNIVERSE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "..", "seed", "a_share_universe.json")
+
+
+def _load_universe():
+    """内置全市场A股名单(随仓库提交): 所有行情源都失败时, 仍可用腾讯/新浪hq按名单取到全市场报价"""
+    try:
+        with open(UNIVERSE_FILE, "r", encoding="utf-8") as f:
+            rows = json.load(f).get("rows") or []
+        out = []
+        for c, n in rows:
+            c = str(c)
+            out.append({"code": c, "name": n, "symbol": sina.to_symbol(c)})
+        return out
+    except Exception as e:  # noqa
+        log.warning("load bundled universe: %s", e)
+        return []
+
+
 # ---------------------------------------------------------------- 昨日涨停存档
 def _load_zt_prev():
     try:
@@ -295,28 +314,49 @@ def _acq_full():
                 quotes[code]["pct"] = r["changepercent"]
         _save_members(rows)
         return quotes, src, (time.time() - t0) * 1000
-    # ---------------- 备用: 东方财富全市场 ----------------
+    # ---------------- 备用1: 东方财富全市场 ----------------
     from ..providers import eastmoney as em
     erows = em.fetch_all_quotes()
-    if not erows or len(erows) < 500:
-        raise ConnectionError("新浪与东方财富全市场快照均失败")
-    quotes = {}
-    for r in erows:
-        code = r["code"]
-        quotes[code] = _make_quote(code, r["name"], r["symbol"], r["price"], r["pre_close"],
-                                   r["open"], r["high"], r["low"], r.get("volume"),
-                                   r.get("amount"), turnover=r.get("turnover"),
-                                   nmc=r.get("nmc"), mktcap=r.get("mktcap"))
-        if quotes[code]["pct"] is None and r.get("pct") is not None:
-            quotes[code]["pct"] = r["pct"]
-    _save_members(erows)
-    log.warning("新浪不可用 → 已切换东方财富全市场快照(%d只)", len(quotes))
-    return quotes, "eastmoney_market", (time.time() - t0) * 1000
+    if erows and len(erows) >= 500:
+        quotes = {}
+        for r in erows:
+            code = r["code"]
+            quotes[code] = _make_quote(code, r["name"], r["symbol"], r["price"], r["pre_close"],
+                                       r["open"], r["high"], r["low"], r.get("volume"),
+                                       r.get("amount"), turnover=r.get("turnover"),
+                                       nmc=r.get("nmc"), mktcap=r.get("mktcap"))
+            if quotes[code]["pct"] is None and r.get("pct") is not None:
+                quotes[code]["pct"] = r["pct"]
+        _save_members(erows)
+        log.warning("新浪不可用 → 已切换东方财富全市场快照(%d只)", len(quotes))
+        return quotes, "eastmoney_market", (time.time() - t0) * 1000
+    # ---------------- 备用2: 内置全市场名单 + 腾讯/新浪 hq 批量行情 ----------------
+    members = _load_members() or _load_universe()
+    if members and len(members) >= 500:
+        symbols = [m["symbol"] for m in members if m.get("symbol")]
+        src, qmap = router.fetch_fast_quotes(symbols)
+        if src and qmap and len(qmap) >= 500:
+            quotes = {}
+            for m in members:
+                q = qmap.get(m["code"])
+                if not q:
+                    continue
+                quotes[m["code"]] = _make_quote(
+                    m["code"], m["name"], m["symbol"], q.get("price"), q.get("pre_close"),
+                    q.get("open"), q.get("high"), q.get("low"), q.get("volume"),
+                    q.get("amount"), turnover=q.get("turnover"))
+            if len(quotes) >= 500:
+                _save_members([{"code": m["code"], "name": m["name"], "symbol": m["symbol"]}
+                               for m in members])
+                log.warning("新浪/东财不可用 → 用内置全市场名单 + %s 批量行情(%d只)",
+                            src, len(quotes))
+                return quotes, f"universe_hq_{src}", (time.time() - t0) * 1000
+    raise ConnectionError("新浪/东财/内置名单+双源hq 均未取到全市场快照")
 
 
 def _acq_fast():
-    """腾讯/新浪hq 快速批量(数百毫秒), 成员来自最近全量快照缓存"""
-    members = _load_members()
+    """腾讯/新浪hq 快速批量(数百毫秒), 成员来自: 最近全量快照 → 内置全市场名单 → 本地样本池"""
+    members = _load_members() or _load_universe()
     if not members:
         # 无成员快照(全新服务器+全量被限流): 用本地样本池兜底(先保证部分可用, 全量恢复后自动补全)
         try:

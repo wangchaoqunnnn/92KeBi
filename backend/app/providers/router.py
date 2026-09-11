@@ -9,13 +9,14 @@ import statistics
 import time
 from collections import deque
 
-from . import sina, tencent
+from . import netease, sina, tencent
 
 log = logging.getLogger("kb.router")
 
 _health = {
     "tencent": {"ok": True, "seq": 0, "fails": 0, "lats": deque(maxlen=6), "last_ms": None},
     "sina_hq": {"ok": True, "seq": 0, "fails": 0, "lats": deque(maxlen=6), "last_ms": None},
+    "netease": {"ok": True, "seq": 0, "fails": 0, "lats": deque(maxlen=6), "last_ms": None},
     "sina_market": {"ok": True, "seq": 0, "fails": 0, "lats": deque(maxlen=6), "last_ms": None},
     "sina_kline": {"ok": True, "fails": 0, "lats": deque(maxlen=5)},
     "tencent_kline": {"ok": True, "fails": 0, "lats": deque(maxlen=5)},
@@ -57,9 +58,11 @@ def _pick(names):
 
 def fast_quote_sources():
     if PREF == "tencent":
-        return ["tencent", "sina_hq"]
+        return ["tencent", "sina_hq", "netease"]
     if PREF == "sina_hq":
-        return ["sina_hq", "tencent"]
+        return ["sina_hq", "tencent", "netease"]
+    if PREF == "netease":
+        return ["netease", "tencent", "sina_hq"]
     return None  # 自动
 
 
@@ -67,7 +70,7 @@ def fetch_fast_quotes(symbols):
     """并行批量实时行情(整 tick 单源): 返回 (source, quotes_dict) 或 (None,None)"""
     if not symbols:
         return None, None
-    names = fast_quote_sources() or ["tencent", "sina_hq"]
+    names = fast_quote_sources() or ["tencent", "sina_hq", "netease"]
     first = _pick(names)
     order = [first] + [n for n in names if n != first]
     last_err = None
@@ -76,6 +79,8 @@ def fetch_fast_quotes(symbols):
         try:
             if name == "tencent":
                 q = tencent.fetch_hq_quotes(symbols)
+            elif name == "netease":
+                q = netease.fetch_hq_quotes(symbols)
             else:
                 q = sina.fetch_hq_quotes(symbols)
             ms = (time.time() - t0) * 1000
