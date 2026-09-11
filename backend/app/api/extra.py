@@ -249,6 +249,7 @@ def admin_status():
         from ..providers import router as src_router
         snap = real_mkt.snapshot()
         mkt = snap.get("mkt_stats") or {}
+        _ind = real_mkt.get_industry_cache()
         st["real"] = {"quote_date": snap.get("quote_date"), "state": snap.get("state"),
                       "snapshot_ts": round(snap.get("ts", 0), 1),
                       "market": mkt,
@@ -257,7 +258,8 @@ def admin_status():
                       "sample_progress": real_sample.progress(),
                       "sources": src_router.health_status(),
                       "enrich": real_mkt.enrich_status(),
-                      "industry_codes": len(real_mkt.get_industry_cache().get("code2industry", {}))}
+                      "industry_source": (_ind or {}).get("source") or "",
+                      "industry_codes": len((_ind or {}).get("code2industry", {}))}
     else:
         st["live"] = mock_live.state()
     return st

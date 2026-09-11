@@ -135,6 +135,12 @@ class Scheduler:
                 now = cn_time.now()
                 in_session = now.weekday() < 5 and 9 <= now.hour <= 16
                 interval = REAL_POLL_SECONDS if in_session else 600
+                # 空快照自救: 无行情时不分时段, 每30s重试直到拿到数据(全量被限流后快速恢复)
+                try:
+                    if not (real_mkt.snapshot().get("quotes") or {}):
+                        interval = min(interval, 30)
+                except Exception:
+                    pass
                 self._polling = True
                 try:
                     await asyncio.to_thread(real_mkt.refresh_quotes)

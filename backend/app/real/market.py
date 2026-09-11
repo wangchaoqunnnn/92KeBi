@@ -82,7 +82,8 @@ def ensure_industry_cache(force=False):
         for ind, codes in ind_map.items():
             for c in codes:
                 code2ind[c] = code2ind.get(c, ind)
-        data = {"date": date.today().isoformat(), "industries": ind_map, "code2industry": code2ind}
+        data = {"date": date.today().isoformat(), "industries": ind_map,
+                "code2industry": code2ind, "source": "sina"}
         try:
             os.makedirs(DATA_DIR, exist_ok=True)
             with open(INDUSTRY_FILE, "w", encoding="utf-8") as f:
@@ -92,17 +93,40 @@ def ensure_industry_cache(force=False):
         log.info("industry map refreshed: %d industries, %d stocks", len(ind_map), len(code2ind))
         return data
     except Exception as e:
-        # 回退: 旧缓存(即使是昨天的) → 仓库内置映射 → 空骨架
+        # 回退链: 新浪失败(如456限流) → 东方财富 → 旧缓存 → 仓库内置映射 → 空骨架
+        tried = [f"新浪失败({str(e)[:60]})"]
+        try:
+            from ..providers import eastmoney as em
+            em_map = em.fetch_industry_map(threads=6)
+            if em_map:
+                code2ind = {}
+                for ind, codes in em_map.items():
+                    for c in codes:
+                        code2ind[c] = code2ind.get(c, ind)
+                data = {"date": date.today().isoformat(), "industries": em_map,
+                        "code2industry": code2ind, "source": "eastmoney"}
+                try:
+                    os.makedirs(DATA_DIR, exist_ok=True)
+                    with open(INDUSTRY_FILE, "w", encoding="utf-8") as f:
+                        json.dump(data, f, ensure_ascii=False)
+                except Exception:
+                    pass
+                log.warning("行业映射: %s → 改用东方财富(%d行业/%d只)",
+                            tried[0], len(em_map), len(code2ind))
+                return data
+            tried.append("东财无数据")
+        except Exception as e2:  # noqa
+            tried.append(f"东财失败({str(e2)[:50]})")
         if cached:
-            log.warning("industry fetch failed(%s) → 用旧缓存(%s, %d只)",
-                        str(e)[:80], cached.get("date"), len(cached.get("code2industry") or {}))
+            log.warning("行业映射: %s → 用旧缓存(%s, %d只)", "; ".join(tried),
+                        cached.get("date"), len(cached.get("code2industry") or {}))
             return cached
         fb = _load_industry_file(FALLBACK_INDUSTRY_FILE)
         if fb:
-            log.warning("industry fetch failed(%s) → 用内置映射兜底(%d只)", str(e)[:80],
+            log.warning("行业映射: %s → 用内置映射兜底(%d只)", "; ".join(tried),
                         len(fb.get("code2industry") or {}))
             return fb
-        log.warning("industry fetch failed(%s) → 暂无映射(板块榜待新浪恢复后自动重试)", str(e)[:80])
+        log.warning("行业映射: %s → 暂无映射(待恢复后自动重试)", "; ".join(tried))
         return {"date": "", "industries": {}, "code2industry": {}}
 
 
@@ -248,6 +272,9 @@ def _acq_full():
     """新浪行情中心全量(成分+行情, 约3~5s)。返回 (quotes, source, latency_ms)"""
     t0 = time.time()
     rows = sina.fetch_members_fast("hs_a", threads=10)
+    if not rows or len(rows) < 100:
+        # 限流(456)等导致静默空页: 视为失败, 交由快速源/成员快照兜底, 避免写入空快照
+        raise ConnectionError(f"全市场成分获取为空(rows={len(rows)}, 可能被限流)")
     quotes = {}
     for r in rows:
         code = r["code"]
@@ -268,6 +295,16 @@ def _acq_full():
 def _acq_fast():
     """腾讯/新浪hq 快速批量(数百毫秒), 成员来自最近全量快照缓存"""
     members = _load_members()
+    if not members:
+        # 无成员快照(全新服务器+全量被限流): 用本地样本池兜底(先保证部分可用, 全量恢复后自动补全)
+        try:
+            rows = db.query("SELECT code, name FROM stocks ORDER BY code")
+            members = [{"code": r["code"], "name": r["name"],
+                        "symbol": sina.to_symbol(r["code"])} for r in rows]
+            if members:
+                log.warning("无成员快照 → 用本地样本池兜底(%d只)", len(members))
+        except Exception:
+            members = []
     if not members:
         return None, None, None, "无成员快照(先执行一次全量同步)"
     symbols = [m["symbol"] for m in members if m.get("symbol")]
@@ -354,6 +391,9 @@ def _maybe_archive():
 
 
 def _store_refresh(quotes, src, ms, full):
+    if not quotes:
+        log.warning("快照为空, 保留上一份行情(不覆盖状态)")
+        return
     with _lock:
         today_zt = [{"code": c, "name": q["name"]} for c, q in quotes.items() if q["zt"]]
         today_dt = [{"code": c, "name": q["name"]} for c, q in quotes.items() if q["dt"]]
