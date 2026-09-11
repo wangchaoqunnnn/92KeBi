@@ -673,6 +673,16 @@ def industry_stats_full():
     if _ind_stats_cache["key"] == qd and now - _ind_stats_cache["ts"] < 5:
         return [dict(r) for r in _ind_stats_cache["rows"]]
     rows = _industry_stats_full_impl()
+    if not rows:
+        # 行业映射可能为空/损坏(首次抓取失败) → 强制重建一次映射再算, 避免板块榜整表无数据
+        try:
+            data = get_industry_cache()
+            if not (data or {}).get("code2industry"):
+                ensure_industry_cache(force=True)
+                rows = _industry_stats_full_impl()
+                log.warning("industry map empty → rebuilt, sectors=%d", len(rows))
+        except Exception as e:  # noqa
+            log.warning("industry map rebuild: %s", e)
     _ind_stats_cache.update({"key": qd, "ts": now, "rows": rows})
     return rows
 

@@ -1023,7 +1023,9 @@ export default function DashboardPage({ route, params, nav, goStock }) {
               </tr>
             </thead>
             {secCount === 0 && (
-              <tbody><tr><td colSpan={9}><Empty text="暂无板块数据" /></td></tr></tbody>
+              <tbody><tr><td colSpan={9}>
+                <Empty text="暂无板块数据：行业映射或实时行情尚未就绪，页面每 20 秒自动重试；若持续为空请检查 /api/dashboard/sectors" />
+              </td></tr></tbody>
             )}
             {secCount > 0 && (
               <>
