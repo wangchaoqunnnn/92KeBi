@@ -40,38 +40,78 @@ POLICY_KEYWORDS = [
 ]
 
 
-def ensure_industry_cache(force=False):
-    """新浪行业成员映射(49行业), 缓存至当日json"""
-    if os.path.exists(INDUSTRY_FILE):
-        try:
-            with open(INDUSTRY_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if not force and data.get("date") == date.today().isoformat():
-                return data
-        except Exception:
-            pass
-    tree = sina.fetch_node_tree()
-    industries = tree["industries"]
-    ind_map = sina.fetch_industry_map(industries, threads=10)
-    code2ind = {}
-    for ind, codes in ind_map.items():
-        for c in codes:
-            code2ind[c] = code2ind.get(c, ind)
-    data = {"date": date.today().isoformat(), "industries": ind_map, "code2industry": code2ind}
+_IND_TRY_TS = 0.0
+_IND_BACKOFF = 120.0   # 抓取失败后的退避秒数(避免新浪 456 限流风暴)
+FALLBACK_INDUSTRY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                      "..", "seed", "real_industries_fallback.json")
+
+
+def _load_industry_file(path):
     try:
-        os.makedirs(DATA_DIR, exist_ok=True)
-        with open(INDUSTRY_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False)
+        with open(path, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        if isinstance(d, dict) and d.get("code2industry"):
+            return d
+    except Exception:
+        pass
+    return None
+
+
+def ensure_industry_cache(force=False):
+    """新浪行业成员映射(49行业), 缓存至当日json。
+    绝不抛异常: 抓取失败时依次回退 旧缓存 → 仓库内置映射 → 空骨架, 保证服务不因映射失败而无法启动。"""
+    global _IND_TRY_TS
+    cached = _load_industry_file(INDUSTRY_FILE) if os.path.exists(INDUSTRY_FILE) else None
+    if cached and not force and cached.get("date") == date.today().isoformat():
+        return cached
+    # 退避: 距上次失败尝试不足 backoff 秒 → 直接用可用数据(旧缓存/内置), 不再打新浪
+    now = time.time()
+    if not force and now - _IND_TRY_TS < _IND_BACKOFF:
+        if cached:
+            return cached
+        fb = _load_industry_file(FALLBACK_INDUSTRY_FILE)
+        if fb:
+            return fb
+        return {"date": "", "industries": {}, "code2industry": {}}
+    _IND_TRY_TS = now
+    try:
+        tree = sina.fetch_node_tree()
+        industries = tree["industries"]
+        ind_map = sina.fetch_industry_map(industries, threads=4)   # 并发降到4, 降低被限流概率
+        code2ind = {}
+        for ind, codes in ind_map.items():
+            for c in codes:
+                code2ind[c] = code2ind.get(c, ind)
+        data = {"date": date.today().isoformat(), "industries": ind_map, "code2industry": code2ind}
+        try:
+            os.makedirs(DATA_DIR, exist_ok=True)
+            with open(INDUSTRY_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+        except Exception as e:
+            log.warning("save industry cache: %s", e)
+        log.info("industry map refreshed: %d industries, %d stocks", len(ind_map), len(code2ind))
+        return data
     except Exception as e:
-        log.warning("save industry cache: %s", e)
-    log.info("industry map refreshed: %d industries, %d stocks", len(ind_map), len(code2ind))
-    return data
+        # 回退: 旧缓存(即使是昨天的) → 仓库内置映射 → 空骨架
+        if cached:
+            log.warning("industry fetch failed(%s) → 用旧缓存(%s, %d只)",
+                        str(e)[:80], cached.get("date"), len(cached.get("code2industry") or {}))
+            return cached
+        fb = _load_industry_file(FALLBACK_INDUSTRY_FILE)
+        if fb:
+            log.warning("industry fetch failed(%s) → 用内置映射兜底(%d只)", str(e)[:80],
+                        len(fb.get("code2industry") or {}))
+            return fb
+        log.warning("industry fetch failed(%s) → 暂无映射(板块榜待新浪恢复后自动重试)", str(e)[:80])
+        return {"date": "", "industries": {}, "code2industry": {}}
 
 
 def get_industry_cache(force=False):
+    """返回行业映射; 当日缓存有效则直接返回, 否则按退避策略尝试刷新(失败回退旧数据, 不抛异常)"""
     with _lock:
-        if _state.get("industry_data"):
-            return _state["industry_data"]
+        cur = _state.get("industry_data")
+    if cur and not force and cur.get("date") == date.today().isoformat():
+        return cur
     data = ensure_industry_cache(force)
     with _lock:
         _state["industry_data"] = data

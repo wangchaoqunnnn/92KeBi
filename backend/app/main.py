@@ -82,7 +82,11 @@ async def _init_real():
     if not ok:
         log.error("实时行情源不可达(新浪接口)。请检查网络/外网权限后重启；系统将处于待命状态。")
         return
-    real_mkt.get_industry_cache()
+    try:
+        real_mkt.get_industry_cache()
+    except Exception as e:  # noqa
+        # 行业映射失败(如新浪 456 限流)不得阻断启动; 后续调度会按退避自动重试/回退
+        log.warning("行业映射初始化失败(不阻断启动): %s", str(e)[:120])
     n, msg = real_sample.sync_sample_stocks()
     log.info("real sample synced: n=%s %s (%.1fs)", n, msg, _t.time() - t0)
     if not real_sample.is_up_to_date():
