@@ -139,9 +139,11 @@ def _fetch_page(pn, pz=200):
     return rows
 
 
-def fetch_all_quotes(max_pages=40, threads=8):
+def fetch_all_quotes(max_pages=40, threads=8, deadline_s=45):
     """东财全市场A股快照 → [{code,name,symbol,price,pct,open,high,low,pre_close,
-    volume,amount,turnover,nmc,mktcap}]; 失败返回 []"""
+    volume,amount,turnover,nmc,mktcap}]; 失败返回 []。
+    deadline_s: 整体时间预算(秒) — 东财不可达时不拖慢启动, 超时即放弃(交给下一层兜底)。"""
+    t_start = time.time()
     try:
         first = _fetch_page(1)
     except Exception as e:  # noqa
@@ -158,14 +160,22 @@ def fetch_all_quotes(max_pages=40, threads=8):
     except Exception:
         pass
     pages = min(max_pages, max(1, (total + 199) // 200)) if total else max_pages
+    ex = None
     if pages > 1:
-        with ThreadPoolExecutor(max(2, min(threads, 10))) as ex:
-            futs = [ex.submit(_fetch_page, pn) for pn in range(2, pages + 1)]
-            for fu in as_completed(futs):
+        ex = ThreadPoolExecutor(max(2, min(threads, 10)))
+        futs = [ex.submit(_fetch_page, pn) for pn in range(2, pages + 1)]
+        try:
+            for fu in as_completed(futs, timeout=max(1, deadline_s - (time.time() - t_start))):
+                if time.time() - t_start > deadline_s:
+                    break
                 try:
                     rows += fu.result() or []
                 except Exception:
                     pass
+        except Exception as e:  # noqa (concurrent.futures.TimeoutError 等)
+            log.warning("eastmoney all quotes 超时(%.0fs), 用已取到的 %d 条", deadline_s, len(rows))
+        finally:
+            ex.shutdown(wait=False, cancel_futures=True)
     out = []
     seen = set()
     for r in rows:
