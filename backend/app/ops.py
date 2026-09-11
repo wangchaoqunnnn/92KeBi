@@ -535,7 +535,13 @@ def _sweep_locked(view=None, ctx=None):
         cur = exist_map.get(code)
         now = _now()
         if cur and cur["reason"] == txt and cur["last_date"] == date:
-            continue  # 无变化不写库
+            # 内容无变化, 但仍刷新“最近记录”时间 → 观察池显示实时扫描节奏
+            try:
+                with db.tx() as con:
+                    con.execute("UPDATE ops_items SET updated_at=? WHERE id=?", (now, cur["id"]))
+            except Exception:
+                pass
+            continue
         try:
             with db.tx() as con:
                 if cur:
@@ -1037,6 +1043,38 @@ def t1_fix_sells(rollback=False):
                 log.warning("t1 rollback %s: %s", r["id"], e)
         log.info("T+1 修复: 发现 %d 条当日买卖, 回滚 %d 条", len(rows), len(restored))
     return {"ok": True, "found": out, "rollback": bool(rollback), "restored": restored}
+
+
+def risk_check():
+    """止损自检: 逐只买入池持仓给出 现价/浮亏/是否触发止损/为何暂未卖出。
+    用于排查“早该止损却没卖”的原因(交易时段/T+1/已卖过/行情缺失 等)。"""
+    setup()
+    view, ctx = _signal_view()
+    date = (view or {}).get("date") or _today()
+    wi = window_info()
+    sold = _sold_codes()
+    out = []
+    for r in db.query("SELECT * FROM ops_items WHERE pool='buy' AND status='open'"):
+        entry = r.get("entry_price")
+        price = _price_for(r["code"], ctx)
+        pnl = round((price / entry - 1) * 100, 2) if price and entry else None
+        stop = bool(entry and price and price <= entry * 0.95)
+        blockers = []
+        if not wi["open"]:
+            blockers.append(f"非交易时段(仅 {wi['start']}-{wi['end']} 可卖)")
+        if str(r.get("entry_date") or "") >= str(date):
+            blockers.append(f"T+1 当日买入({r.get('entry_date')})不可卖, 交易日={date}")
+        if r["code"] in sold:
+            blockers.append("该票卖出池已有记录(每票只卖一次); 需先删除旧卖出记录")
+        if price is None:
+            blockers.append("无实时报价(可能停牌)")
+        out.append({"id": r["id"], "code": r["code"], "name": r.get("name"),
+                    "entry_date": r.get("entry_date"), "entry_time": r.get("entry_time"),
+                    "entry_price": entry, "last_price": round(price, 2) if price else None,
+                    "pnl_pct": pnl, "stop_line": round(entry * 0.95, 2) if entry else None,
+                    "stop_triggered": stop, "blockers": blockers,
+                    "will_sell_now": bool(stop and not blockers)})
+    return {"ok": True, "date": date, "window": wi, "items": out}
 
 
 def audit_sell_origins():

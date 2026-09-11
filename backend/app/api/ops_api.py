@@ -107,3 +107,9 @@ def ops_t1_fix(rollback: int = Query(0, ge=0, le=1)):
 def ops_audit_sell():
     """审计: 列出“卖出池中无更早买入流水”的可疑卖出(排查未买入即卖出)"""
     return ops.audit_sell_origins()
+
+
+@router.get("/risk-check")
+def ops_risk_check():
+    """止损自检: 每只持仓的现价/浮亏/是否触发止损/为何暂未卖出"""
+    return ops.risk_check()

@@ -336,8 +336,21 @@ def _store_refresh(quotes, src, ms, full):
             try:
                 from . import cn_time as _ct
                 if quote_date != _ct.today_str() and _ct.is_weekday() and 925 <= _ct.hm() <= 1505:
+                    rolled = False
                     days = intraday.idx_days()
                     if days and _ct.today_str() in days:
+                        rolled = True
+                    else:
+                        # 备用判据: 全市场成交额较上一快照仍在变化(>0.2%) → 盘中数据在更新
+                        try:
+                            prev_amt = (_state.get("mkt_stats") or {}).get("amount_yi") or 0
+                            new_amt = sum((q.get("amount") or 0) for q in quotes.values()) / 1e8
+                            if prev_amt and new_amt and \
+                                    abs(new_amt - prev_amt) / prev_amt > 0.002:
+                                rolled = True
+                        except Exception:
+                            pass
+                    if rolled:
                         quote_date = _ct.today_str()
             except Exception:
                 pass
