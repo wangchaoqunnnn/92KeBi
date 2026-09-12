@@ -20,6 +20,9 @@ log = logging.getLogger("kb.main")
 
 STATIC_DIR = __import__("os").path.join(__import__("os").path.dirname(__file__), "static")
 
+# 后台初始化进度(实盘): HTTP 启动即响应, 初始化在后台进行, 避免重启期接口空响应
+_INIT = {"state": "pending", "detail": "", "ts": 0.0, "elapsed_s": None}
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -32,7 +35,16 @@ async def lifespan(app: FastAPI):
                     "DATA_SOURCE=real 后重启。", os.environ.get("DATA_SOURCE", ""),
                     os.environ.get("DATA_SOURCE", ""))
     if mode == "real":
-        await _init_real()
+        # 引擎阈值先切到全市场口径(秒级), 重活(快照/样本/回填)放后台线程:
+        # 这样 uvicorn 立即开始监听, /api/health 能马上返回初始化进度, 不再出现“空响应”
+        from .core import phase
+        from .config import REAL_RULE
+        phase.set_rule(REAL_RULE)
+        import threading
+        _INIT.update({"state": "initializing", "detail": "启动中: 拉取全市场快照/行业/样本",
+                      "ts": __import__("time").time(), "elapsed_s": None})
+        threading.Thread(target=_init_real_bg, daemon=True, name="kb-init").start()
+        log.info("实盘后台初始化已启动(HTTP 立即可用, 进度见 /api/health 的 init)")
     else:
         from .seed.run_seed import seed_market
         res = seed_market()
@@ -54,7 +66,7 @@ async def lifespan(app: FastAPI):
                                  "pre_close": b["pre_close"], "high": b["high"], "low": b["low"],
                                  "amount": b.get("amount"), "pct": b["pct"]}
                                 for b in hist["day_bars"][-1]])
-    # 3) 调度任务
+    # 3) 调度任务(立即启动: 行情轮询/分析/打板/看门狗)
     from .tasks.scheduler import Scheduler
     sched = Scheduler()
     await sched.start()
@@ -64,13 +76,23 @@ async def lifespan(app: FastAPI):
     db.close_all()
 
 
-async def _init_real():
-    """实盘模式初始化: 快照→行业→样本→日K回填(首次较慢, 后续秒级跳过)"""
+def _init_real_bg():
+    """后台执行实盘初始化, 并把进度写入 _INIT(供 /api/health 查询)"""
     import time as _t
     t0 = _t.time()
-    from .core import phase
-    from .config import REAL_RULE
-    phase.set_rule(REAL_RULE)          # 引擎阈值切到全市场口径
+    try:
+        _init_real_sync()
+        _INIT.update({"state": "ready", "detail": "实盘就绪", "elapsed_s": round(_t.time() - t0, 1)})
+    except Exception as e:  # noqa
+        _INIT.update({"state": "failed", "detail": str(e)[:200],
+                      "elapsed_s": round(_t.time() - t0, 1)})
+        log.error("实盘初始化失败: %s", e, exc_info=True)
+
+
+def _init_real_sync():
+    """实盘模式初始化(阻塞): 快照→行业→样本→日K回填(首次较慢, 后续秒级跳过)"""
+    import time as _t
+    t0 = _t.time()
     from .real import market as real_mkt
     from .real import sample as real_sample
     ok = False
@@ -80,8 +102,7 @@ async def _init_real():
             break
         log.warning("real snapshot attempt %d failed", attempt + 1)
     if not ok:
-        log.error("实时行情源不可达(新浪接口)。请检查网络/外网权限后重启；系统将处于待命状态。")
-        return
+        raise ConnectionError("实时行情源不可达(新浪/腾讯/东方财富/内置名单均失败)")
     try:
         real_mkt.get_industry_cache()
     except Exception as e:  # noqa
@@ -141,6 +162,7 @@ def health():
     from . import pub_url
     d = {"ok": True, "data_source": DATA_SOURCE,
          "data_source_env": os.environ.get("DATA_SOURCE", ""),   # 环境变量原始值(定位 mock 来源)
+         "init": dict(_INIT),                                    # 后台初始化进度(ready=就绪)
          "cn_time": cn_time.now_str(),
          "tz_env": os.environ.get("TZ", "") or "(system)",
          "push_page_url": pub_url.ops_page_url(),
