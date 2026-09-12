@@ -337,8 +337,12 @@ def analyze_real():
     ctx["pools"] = pool_view
     ctx["signals"] = sig_view
     # 供个股详情/信号复用(与 mock 模式一致)
+    # 注意: 只保留轻量字段 — hist 的 day_bars(520日×500只≈26万条)绝不常驻内存,
+    # 各引擎需要的 news 保留即可(池子只用 ctx["hist"]["news"])
     from .. import market_cache
+    ctx["hist"] = {"news": (hist.get("news") or [])}
     market_cache.remember(ctx)
+    hist = None   # 释放本轮构建的大对象引用, 交给 GC
 
     return {
         "date": today_d,

@@ -53,6 +53,15 @@ def _kick_bg():
     t.start()
 
 
+def _trim_memory():
+    """Linux/glibc: 将已释放的空闲 arena 归还操作系统, 降低 RSS 高水位(非 glibc 平台静默跳过)"""
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
+
+
 def _bg_worker():
     global _bg_running, _bg_last
     try:
@@ -66,12 +75,13 @@ def _bg_worker():
         import logging
         logging.getLogger("kb.cache").warning("background view build: %s", e)
     finally:
-        # 全量分析会分配大量临时对象, 每次构建后回收一轮, 抑制 RSS 缓慢膨胀
+        # 全量分析会分配大量临时对象, 每次构建后回收并归还内存给系统(降低常驻RSS)
         try:
             import gc
             gc.collect()
         except Exception:
             pass
+        _trim_memory()
         with _bg_lock:
             _bg_running = False
             _bg_last = time.time()
@@ -108,6 +118,12 @@ def get_view(max_age=20.0, wait=False):
         with _lock:
             _cache["ts"] = time.time()
             _cache["view"] = view
+        try:
+            import gc
+            gc.collect()
+        except Exception:
+            pass
+        _trim_memory()
         return view
 
 

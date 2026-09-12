@@ -262,6 +262,9 @@ def admin_status():
                       "industry_codes": len((_ind or {}).get("code2industry", {})),
                       "board_coverage": real_mkt.board_coverage(),
                       "universe_coverage": real_mkt.universe_coverage()}
+        from ..config import MEM_LIMIT_MB
+        st["mem_mb"] = st.get("mem_mb")
+        st["mem_limit_mb"] = MEM_LIMIT_MB
     else:
         st["live"] = mock_live.state()
     return st

@@ -31,6 +31,12 @@ def _load_env_file(path):
 
 _load_env_file(os.path.join(_BASE, ".env"))
 
+# 内存优化(best-effort): 限制 glibc arena 数 / 降低归还阈值 → 多线程常驻内存显著下降
+# (systemd 的 Environment= 更可靠, 这里兜底非 systemd 启动场景)
+os.environ.setdefault("MALLOC_ARENA_MAX", "2")
+os.environ.setdefault("MALLOC_TRIM_THRESHOLD_", "131072")
+os.environ.setdefault("MALLOC_MMAP_THRESHOLD_", "131072")
+
 from app.cn_time import init_process_timezone  # noqa: E402
 init_process_timezone()                          # 必须在导入 app.config 之前
 

@@ -15,6 +15,10 @@ WorkingDirectory=/root/92KeBi
 ExecStart=/root/92KeBi/.venv/bin/python3 -X utf8 run.py
 Restart=always
 RestartSec=8
+# 内存优化(多线程 Python 常驻内存显著下降): 限制 glibc arena 数 + 降低归还阈值
+Environment=MALLOC_ARENA_MAX=2
+Environment=MALLOC_TRIM_THRESHOLD_=131072
+Environment=MALLOC_MMAP_THRESHOLD_=131072
 # 启动/停止超时: 首次启动需做样本日K回填(2~5分钟)与大盘初始化,
 # 默认90s会被判 timeout 杀掉 → 放宽
 TimeoutStartSec=900
